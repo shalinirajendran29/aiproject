@@ -127,9 +127,10 @@ def generate_mock_html_form(file_path: str):
         f.write(html_content)
     print(f"Generated mock HTML form at: {file_path}")
 
+
 def run_pipeline():
     print("=== STARTING INTELLIGENT FORM AUTOMATION PIPELINE ===")
-    
+    # directories setup and asset generation 
     # Directories setup
     base_dir = os.path.dirname(os.path.abspath(__file__))
     tmp_dir = os.path.join(base_dir, "pipeline_demo")
