@@ -15,9 +15,47 @@ class FieldMappingEngine:
             "full_name": ["name", "fullname", "username", "first_name", "last_name", "first", "last", "client_name", "owner"],
             "email": ["mail", "email_address", "user_mail", "contact_email", "eposta", "login_email"],
             "phone": ["tel", "telephone", "mobile", "phone_number", "contact_no", "cell", "fax"],
+            "mobile_number": ["tel", "telephone", "mobile", "phone_number", "mobile_number", "contact_no", "cell", "fax"],
             "dob": ["date_of_birth", "birthdate", "birthday", "dob", "birth_date"],
             "address": ["street", "location", "residence", "city", "zip", "postal_code", "billing_address", "shipping_address"],
-            "id_number": ["ssn", "passport", "license_no", "id_val", "document_id", "identity_number", "id"]
+            "id_number": ["ssn", "passport", "license_no", "id_val", "document_id", "identity_number", "id"],
+            "pan_no": ["pan", "pan_no", "pan_number", "permanent_account_number"],
+            "gstin_no": ["gst", "gstin", "gstin_no", "gstin_number", "tax_number"],
+            "country": ["country", "nation", "country_name"],
+            "state": ["state", "province", "region", "state_name"],
+            "district": ["district", "city", "town", "locality", "suburb"],
+            "pin_code": ["pin_code", "pincode", "zip", "zipcode", "postal", "postal_code", "zip_code"],
+            "invoice_number": ["invoice_number", "invoice_no", "bill_no", "bill_number", "inv_no", "receipt_no", "inv_num", "invoice number", "invoice no", "bill no", "bill number", "receipt number"],
+            "invoice_date": ["invoice_date", "bill_date", "inv_date", "date_issued", "issue_date", "invoice date", "bill date", "date of issue"],
+            "total_amount": ["total_amount", "total", "grand_total", "amount_due", "amount", "total_due", "total amount", "grand total", "net amount", "invoice amount", "sum due"],
+            "vendor_name": ["vendor_name", "vendor", "merchant", "biller", "supplier", "merchant_name", "vendor name", "company name", "company", "supplier name"],
+            "gross_weight": ["gross_weight", "gross weight", "gr_wt", "gwt", "gross wt", "grossweight"],
+            "net_weight": ["net_weight", "net weight", "nt_wt", "nwt", "net wt", "netweight"],
+            "purity": ["purity", "karat", "carat", "kt", "ct", "hallmark", "gold_purity", "purity_percent"],
+            "making_charges": ["making_charges", "making charges", "making charge", "making chg", "mc", "making_charge"],
+            "wastage": ["wastage", "wastage_percent", "wastage weight", "wastage wt", "wastage %", "wastage_wt"],
+            "rate_per_gram": ["rate", "rate_per_gram", "gold_rate", "rate/gm", "metal_rate", "gold rate", "rate per gram"],
+            "stone_weight": ["stone_weight", "stone weight", "st_wt", "stone wt", "stone_wt"],
+            "item_description": ["item", "description", "item_description", "jewel_type", "ornament", "particulars", "item description", "product_name", "product", "goods", "service", "particulars", "description of goods"],
+            "quantity": ["qty", "quantity", "quantity_ordered", "pieces", "pcs", "nos", "units", "count"],
+            "unit_price": ["unit_price", "rate", "price", "price_per_item", "item_rate", "unit_rate", "rate_per_piece"],
+            "discount": ["discount", "discount_amount", "promo_code", "discount_value", "disc", "rebate", "less"],
+            "hsn_code": ["hsn", "hsn_code", "sac", "sac_code", "hsn_sac_code", "tax_classification"],
+            "shipping_charges": ["shipping_charges", "delivery_fee", "shipping", "freight", "postage", "carriage", "courier_charges"],
+            "sku_code": ["sku", "item_code", "product_id", "product_code", "article_no", "style_no", "barcode"],
+            "patient_name": ["patient_name", "patient", "patient_id", "sick_person", "admitted_patient", "patient name"],
+            "doctor_name": ["doctor_name", "doctor", "physician", "surgeon", "consultant", "referred_by", "doctor name"],
+            "admission_date": ["admission_date", "admitted_on", "visit_date", "checkin_date", "admission_day", "admit_date", "admission date"],
+            "discharge_date": ["discharge_date", "discharged_on", "checkout_date", "discharge_day", "discharge date"],
+            "room_number": ["room_number", "room_no", "ward_no", "bed_no", "room_id", "cabin_no", "room number"],
+            "medicine_cost": ["medicine_cost", "pharmacy_bill", "drug_charges", "medicine_amount", "med_cost", "medicine cost"],
+            "insurance_provider": ["insurance_provider", "tpa", "insurance_co", "payer", "insurance_name", "tpa_name", "insurance provider"],
+            "pnr_no": ["pnr", "pnr_no", "booking_id", "ticket_number", "ticket_no", "pnr_number", "booking_reference", "reference_no", "ticket no", "pnr number"],
+            "journey_date": ["journey_date", "travel_date", "departure_date", "departure_time", "event_date", "date_of_journey", "doj", "journey date"],
+            "source_location": ["source", "origin", "from_station", "departure_from", "boarding_point", "source_city", "from", "source location"],
+            "destination_location": ["destination", "to_station", "arrival_at", "destination_city", "to", "destination location"],
+            "seat_number": ["seat_number", "seat_no", "berth_no", "berth", "seat", "coach_no", "cabin", "seat number"],
+            "vehicle_no": ["vehicle_no", "train_no", "train_number", "flight_no", "flight_number", "carrier_no", "bus_no", "vehicle no", "train no", "flight no"]
         }
 
     @property
@@ -39,16 +77,17 @@ class FieldMappingEngine:
 
     def _get_string_match_score(self, source_key: str, target_field_info: str) -> float:
         """Fallback lexical overlap scorer if SentenceTransformers is offline."""
+        source_clean = source_key.lower().replace('_', ' ')
         target_clean = target_field_info.lower()
         
         # Guard: prevent "address" from matching "email address"
-        if source_key == "address" and ("email" in target_clean or "mail" in target_clean):
+        if source_clean == "address" and ("email" in target_clean or "mail" in target_clean):
             # Only match if it's explicitly about a physical address
             if not any(kw in target_clean for kw in ["home", "mailing", "street", "residence", "postal", "billing", "shipping"]):
                 return 0.0
         
         # 1. Check exact or substring containment of primary key
-        if source_key in target_clean:
+        if source_clean in target_clean or source_key in target_clean:
             return 0.8
             
         # 2. Check synonyms
@@ -87,8 +126,34 @@ class FieldMappingEngine:
         """
         mappings = {}
         
-        # Exclude null values from mapping
-        valid_extracted = {k: v for k, v in extracted_data.items() if v is not None}
+        # Exclude null/empty values from mapping and system-generated code keys
+        keys_to_exclude = {"code", "customer_code", "customer_id", "id"}
+        valid_extracted = {k: v for k, v in extracted_data.items() if v is not None and str(v).strip() != "" and k.lower() not in keys_to_exclude}
+        
+        # Intelligently parse sub-fields from address if they don't exist in extracted_data
+        address = valid_extracted.get("address")
+        if address and isinstance(address, str):
+            # Parse PIN code: 6-digit or 4-digit zip/pin code
+            pin_match = re.search(r'\b\d{4,6}\b', address)
+            if pin_match and "pin_code" not in valid_extracted and "zip" not in valid_extracted:
+                valid_extracted["pin_code"] = pin_match.group(0)
+                
+            # Parse Country
+            countries = ["India", "Australia", "United States", "USA", "United Kingdom", "UK", "Canada"]
+            for c in countries:
+                if re.search(r'\b' + re.escape(c) + r'\b', address, re.IGNORECASE):
+                    if "country" not in valid_extracted:
+                        valid_extracted["country"] = c
+                    break
+                    
+            # Parse State
+            states = ["VIC", "Victoria", "NSW", "New South Wales", "QLD", "Queensland", "Tamil Nadu", "Tamilnadu", "TN", "Kerala", "KL", "Karnataka", "KA", "Delhi", "Maharashtra", "MH"]
+            for s in states:
+                if re.search(r'\b' + re.escape(s) + r'\b', address, re.IGNORECASE):
+                    if "state" not in valid_extracted:
+                        valid_extracted["state"] = s
+                    break
+
         if not valid_extracted:
             return mappings
 
