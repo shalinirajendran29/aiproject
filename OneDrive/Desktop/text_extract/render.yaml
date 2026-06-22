@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: extractflow-ai
+    runtime: docker
+    plan: starter # Starter plan is recommended to support persistent disks
+    envVars:
+      - key: PORT
+        value: 8000
+      - key: DATABASE_URL
+        value: sqlite:////app/storage/sql_app.db
+      - key: UPLOAD_DIR
+        value: /app/storage/uploads
+      - key: PLAYWRIGHT_HEADLESS
+        value: "true"
+      - key: EMBEDDING_MODEL
+        value: "all-MiniLM-L6-v2"
+      - key: GEMINI_API_KEY
+        sync: false
+    disk:
+      name: extractflow-disk
+      mountPath: /app/storage
+      sizeGB: 1
