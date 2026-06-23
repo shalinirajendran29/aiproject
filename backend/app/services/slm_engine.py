@@ -3,7 +3,6 @@ import json
 import re
 from typing import Dict, Any
 from ..config import settings
-
 class SLMEngine:
     def __init__(self):
         self.base_url = settings.OLLAMA_BASE_URL
@@ -14,6 +13,7 @@ class SLMEngine:
         Uses Ollama SLM to extract structured fields.
         Falls back to rule-based parser if Ollama is unavailable.
         """
+        
         prompt = (
             "You are an AI document parser. Extract key fields from the text below.\n"
             "Identify the following attributes if present:\n"
@@ -26,6 +26,7 @@ class SLMEngine:
             "Format the output strictly as a single JSON object with these keys. "
             "Use null for values not found in the text. Do not add any text before or after the JSON.\n\n"
             f"OCR Text:\n{ocr_text}"
+
         )
         
         payload = {
@@ -167,5 +168,4 @@ class SLMEngine:
             dob_match = re.search(r'\b(?:\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4})|(?:[A-Za-z]+\s+\d{1,2},\s+\d{4})\b', text)
             if dob_match:
                 data["dob"] = dob_match.group(0)
-
         return data
