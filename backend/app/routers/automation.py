@@ -21,6 +21,11 @@ class CrawlRequest(BaseModel):
 class FillRequest(BaseModel):
     document_id: str
     target_url: str
+    record_index: Optional[int] = None
+
+class BulkFillRequest(BaseModel):
+    document_id: str
+    target_url: str
 
 @router.post("/crawl", response_model=List[Dict[str, Any]])
 def crawl_web_fields(request: CrawlRequest):
@@ -48,44 +53,89 @@ def fill_web_form(request: FillRequest, db: Session = Depends(get_db)):
     if not extracted_data:
         raise HTTPException(status_code=400, detail="No extracted data found on document to fill.")
 
-    # 2. Crawl website inputs
-    try:
-        target_fields = automation_engine.inspect_page_forms(request.target_url)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to inspect target page inputs: {str(e)}")
+    # Support spreadsheet/table row selection
+    if "records" in extracted_data and isinstance(extracted_data["records"], list):
+        idx = request.record_index or 0
+        if 0 <= idx < len(extracted_data["records"]):
+            extracted_data = extracted_data["records"][idx]
+        else:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Invalid record_index: {idx}. The document contains {len(extracted_data['records'])} rows."
+            )
 
-    if not target_fields:
-        raise HTTPException(status_code=400, detail="No input fields found on target website.")
-
-    # 3. Perform Semantic Mapping
-    mapped_selectors = mapping_engine.map_fields(extracted_data, target_fields, db)
-    if not mapped_selectors:
-        return {
-            "success": False,
-            "message": "No matching fields could be semantically aligned between document and website.",
-            "mappings": {},
-            "errors": []
-        }
-
-    # 4. Fill form and take screenshot
+    # 2. Fill form and take screenshot (scanning and mapping happens unified inside the browser)
     screenshot_filename = f"screenshot_{doc.id}.png"
     screenshot_path = os.path.join(settings.UPLOAD_DIR, "screenshots", screenshot_filename)
-    # Convert absolute path to relative or URL path for frontend
     screenshot_url_path = f"/static/screenshots/{screenshot_filename}"
 
     try:
         fill_res = automation_engine.fill_form(
             url=request.target_url,
-            selector_values=mapped_selectors,
+            extracted_data=extracted_data,
+            mapping_engine=mapping_engine,
+            db=db,
             screenshot_path=screenshot_path
+        )
+        
+        filled_list = fill_res.get("filled") or fill_res.get("filled_fields") or []
+        if not fill_res["success"] and not filled_list:
+            raise HTTPException(status_code=400, detail="; ".join(fill_res["errors"]) or "Autofill failed.")
+            
+        return {
+            "success": fill_res["success"],
+            "filled_fields": filled_list,
+            "errors": fill_res["errors"],
+            "mappings": fill_res["mappings"],
+            "screenshot_url": screenshot_url_path
+        }
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Autofill simulation crashed: {str(e)}")
+
+@router.post("/fill-bulk")
+def fill_web_form_bulk(request: BulkFillRequest, db: Session = Depends(get_db)):
+    """Maps extracted data from the document and loops to fill all records using Playwright."""
+    # 1. Fetch document
+    doc = db.query(DBModelDocument).filter(DBModelDocument.id == request.document_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+        
+    if doc.status != "completed":
+        raise HTTPException(status_code=400, detail=f"Document is in status: {doc.status}. Must be completed.")
+
+    # Get data to fill
+    extracted_data = doc.corrected_json or doc.extracted_json
+    if not extracted_data:
+        raise HTTPException(status_code=400, detail="No extracted data found on document to fill.")
+
+    # Get multiple records list
+    records = []
+    if "records" in extracted_data and isinstance(extracted_data["records"], list):
+        records = extracted_data["records"]
+    else:
+        # Fallback to single record list
+        records = [extracted_data]
+
+    # Setup screenshot path
+    screenshot_dir = os.path.join(settings.UPLOAD_DIR, "screenshots")
+    os.makedirs(screenshot_dir, exist_ok=True)
+
+    try:
+        fill_res = automation_engine.fill_form_bulk(
+            url=request.target_url,
+            records=records,
+            mapping_engine=mapping_engine,
+            db=db,
+            screenshot_dir=screenshot_dir
         )
         
         return {
             "success": fill_res["success"],
-            "filled_fields": fill_res["filled"],
+            "results": fill_res["results"],
             "errors": fill_res["errors"],
-            "mappings": mapped_selectors,
-            "screenshot_url": screenshot_url_path
+            "screenshot_url": f"/static/screenshots/screenshot_bulk_{len(records)-1}.png" if records else ""
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Autofill simulation crashed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Bulk autofill simulation crashed: {str(e)}")

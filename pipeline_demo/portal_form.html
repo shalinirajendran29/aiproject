@@ -77,25 +77,5 @@
             <button type="button" class="btn-submit" id="submit_btn">Confirm & Submit</button>
         </form>
     </div>
-    <script>
-        document.getElementById('submit_btn').addEventListener('click', function() {
-            // Replace form content with a submission confirmation page
-            document.querySelector('.form-container').innerHTML = `
-                <h2 style="color: #10b981; margin-top: 10px;">✓ Submission Successful!</h2>
-                <div style="text-align: center; margin-top: 25px; margin-bottom: 25px;">
-                    <svg width="80" height="80" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
-                        <polyline points="22 4 12 14.01 9 11.01"></polyline>
-                    </svg>
-                </div>
-                <p style="text-align: center; color: #475569; font-size: 0.95rem; line-height: 1.5; margin-bottom: 20px;">
-                    Your details have been successfully saved and stored in the customer portal database.
-                </p>
-                <div style="background: #f1f5f9; padding: 12px; border-radius: 6px; font-size: 0.85rem; color: #64748b; text-align: center;">
-                    Reference Code: MOCK-${Math.floor(100000 + Math.random() * 900000)}
-                </div>
-            `;
-        });
-    </script>
 </body>
 </html>

@@ -15,12 +15,14 @@ class Settings(BaseSettings):
     OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
     OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "phi3") # or gemma:2b, mistral, etc.
     EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+    GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
     
     # Playwright Settings
     PLAYWRIGHT_HEADLESS: bool = os.getenv("PLAYWRIGHT_HEADLESS", "False").lower() in ("true", "1", "yes")
     
     class Config:
         case_sensitive = True
+        env_file = ".env"
 
 settings = Settings()
 
