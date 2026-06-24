@@ -402,6 +402,18 @@ class SLMEngine:
                         break
                 if processed.get("state"):
                     break
+        
+        # 9. Clean Bank Details (e.g. "Name of the Bank ICICI" -> "ICICI")
+        for key in list(processed.keys()):
+            if "bank" in key and processed[key]:
+                bank_val = str(processed[key]).strip()
+                cleaned_bank = re.sub(
+                    r'^(?:name\s+of\s+the\s+bank|name\s+of\s+bank|bank\s+details|bank\s+detail|bank\s+name|bank)\s*[:\-]?\s*',
+                    '',
+                    bank_val,
+                    flags=re.IGNORECASE
+                ).strip()
+                processed[key] = cleaned_bank
                 
         return processed
 
