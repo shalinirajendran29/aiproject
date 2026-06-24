@@ -794,33 +794,69 @@ export default function App() {
                     return <p className="text-xs text-slate-400 italic p-4 text-center">No fields extracted. Toggle Add Field below to verify records.</p>;
                   }
                   
+                  // Required fields check
+                  const requiredFields = [
+                    { key: 'full_name', label: 'Customer Name' },
+                    { key: 'mobile_number', label: 'Mobile Number' },
+                    { key: 'country', label: 'Country' },
+                    { key: 'state', label: 'State' }
+                  ];
+                  const missingRequired = requiredFields.filter(f => !activeFields[f.key] || !activeFields[f.key].toString().trim());
+
                   return (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {editableFields.map(([key, val]) => {
-                        const std = STANDARD_FIELDS.find(f => f.key === key);
-                        return (
-                          <div key={key} className="field-input-card">
-                            <div className="field-label-wrapper">
-                              <span className="field-label-text">{getFieldLabel(key)}</span>
-                              <button
-                                onClick={() => handleRemoveField(key)}
-                                className="text-[10px] text-rose-400 hover:text-rose-300 font-semibold transition-colors"
-                                title="Remove Field"
-                              >
-                                Remove
-                              </button>
-                            </div>
-                            <input 
-                              type="text" 
-                              value={val || ''}
-                              onChange={(e) => handleFieldChange(key, e.target.value)}
-                              className="input-glass w-full"
-                              placeholder={std ? std.placeholder : `Enter ${key.replace(/_/g, ' ')}`}
-                            />
+                    <>
+                      {missingRequired.length > 0 && (
+                        <div className="flex flex-col gap-2.5 p-4 rounded-xl border border-rose-500/20 bg-rose-500/10 text-rose-300 mb-4">
+                          <div className="flex items-center gap-2">
+                            <AlertCircle className="w-4 h-4 text-rose-400" />
+                            <span className="text-[10px] font-bold uppercase tracking-wider">Required Fields Missing for ERP Ingestion</span>
                           </div>
-                        );
-                      })}
-                    </div>
+                          <p className="text-[11px] text-slate-300">
+                            The following required fields must be populated to prevent form automation failure on the target ERP system:
+                          </p>
+                          <ul className="list-disc list-inside text-xs font-semibold text-rose-300 flex flex-wrap gap-x-4 gap-y-1">
+                            {missingRequired.map(f => (
+                              <li key={f.key}>{f.label}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                      
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {editableFields.map(([key, val]) => {
+                          const std = STANDARD_FIELDS.find(f => f.key === key);
+                          const isRequired = requiredFields.some(rf => rf.key === key);
+                          const isEmpty = !val || !val.toString().trim();
+                          const isWarning = isRequired && isEmpty;
+                          
+                          return (
+                            <div key={key} className={`field-input-card ${isWarning ? 'border-rose-500/20 bg-rose-500/5' : ''}`}>
+                              <div className="field-label-wrapper">
+                                <span className="field-label-text">
+                                  {getFieldLabel(key)}
+                                  {isRequired && <span className="text-rose-400 ml-1 font-bold">*</span>}
+                                </span>
+                                <button
+                                  onClick={() => handleRemoveField(key)}
+                                  className="text-[10px] text-rose-400 hover:text-rose-300 font-semibold transition-colors"
+                                  title="Remove Field"
+                                >
+                                  Remove
+                                </button>
+                              </div>
+                              <input 
+                                type="text" 
+                                value={val || ''}
+                                onChange={(e) => handleFieldChange(key, e.target.value)}
+                                className={`input-glass w-full ${isWarning ? 'focus:border-rose-500' : ''}`}
+                                placeholder={std ? std.placeholder : `Enter ${key.replace(/_/g, ' ')}`}
+                                style={isWarning ? { borderColor: 'rgba(239, 68, 68, 0.3)' } : {}}
+                              />
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </>
                   );
                 })()}
 
