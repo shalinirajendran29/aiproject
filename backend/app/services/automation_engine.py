@@ -175,27 +175,85 @@ class PlaywrightAutomationEngine:
         # Helper to verify if the form submit succeeded.
         # Returns (success_boolean, error_message)
         try:
-            # Check for HTML5 invalid fields
-            invalid_fields = page.query_selector_all("input:invalid, select:invalid, textarea:invalid")
-            if len(invalid_fields) > 0:
-                return False, f"Form submission failed: {len(invalid_fields)} required fields are missing or invalid in the target browser."
-            
-            # Check if URL hasn't changed and required fields are still empty
-            curr_url = page.url
-            if curr_url == original_url:
-                required_empty = page.evaluate("""() => {
-                    let inputs = document.querySelectorAll("input[required], select[required], textarea[required]");
-                    let emptyCount = 0;
-                    for (let elem of inputs) {
-                        if (!elem.value || !elem.value.trim()) {
-                            emptyCount++;
+            # Run advanced DOM-based validation check
+            check_res = page.evaluate("""() => {
+                // 1. Check for inputs with aria-invalid="true"
+                let invalidInputs = document.querySelectorAll("input[aria-invalid='true'], select[aria-invalid='true'], textarea[aria-invalid='true']");
+                if (invalidInputs.length > 0) {
+                    return {
+                        success: false,
+                        msg: `Form submission failed: ${invalidInputs.length} required fields are missing or invalid.`
+                    };
+                }
+                
+                // 2. Check for elements with class containing 'Mui-error' or '.error' or '.invalid' that are visible
+                let errorElements = Array.from(document.querySelectorAll(".Mui-error, .error, .invalid-feedback, .error-message"));
+                let visibleErrors = errorElements.filter(el => {
+                    let style = window.getComputedStyle(el);
+                    return style.display !== 'none' && style.visibility !== 'hidden' && el.offsetWidth > 0;
+                });
+                if (visibleErrors.length > 0) {
+                    let errTexts = visibleErrors.map(el => el.innerText.trim()).filter(Boolean);
+                    let uniqTexts = Array.from(new Set(errTexts)).slice(0, 3);
+                    let detail = uniqTexts.length > 0 ? ": " + uniqTexts.join("; ") : "";
+                    return {
+                        success: false,
+                        msg: `Form submission failed due to validation errors${detail}`
+                    };
+                }
+                
+                // 3. Check for any empty fields labeled with red asterisks (required)
+                let requiredLabels = [];
+                document.querySelectorAll("label, span, legend, p").forEach(el => {
+                    if (el.innerText && el.innerText.trim().includes("*") && el.innerText.length < 100) {
+                        requiredLabels.push(el);
+                    }
+                });
+                
+                let emptyRequired = [];
+                requiredLabels.forEach(label => {
+                    let input = null;
+                    let labelFor = label.getAttribute("for");
+                    if (labelFor) {
+                        input = document.getElementById(labelFor);
+                    }
+                    if (!input) {
+                        input = label.querySelector("input, select, textarea");
+                    }
+                    if (!input) {
+                        let parent = label.parentElement;
+                        if (parent) {
+                            input = parent.querySelector("input, select, textarea");
+                            if (!input && parent.parentElement) {
+                                input = parent.parentElement.querySelector("input, select, textarea");
+                            }
                         }
                     }
-                    return emptyCount;
-                }""")
-                if required_empty > 0:
-                    return False, f"Form submission failed: {required_empty} required fields are empty on the page."
                     
+                    if (input) {
+                        let val = input.value;
+                        if (!val || !val.trim() || val.trim().toLowerCase() === "select") {
+                            let name = label.innerText.replace("*", "").trim().split("\\n")[0];
+                            if (name && !emptyRequired.includes(name)) {
+                                emptyRequired.push(name);
+                            }
+                        }
+                    }
+                });
+                
+                if (emptyRequired.length > 0) {
+                    return {
+                        success: false,
+                        msg: `Form submission failed: required fields are empty: ${emptyRequired.join(", ")}`
+                    };
+                }
+                
+                return { success: true, msg: "" };
+            }""")
+            
+            if not check_res.get("success", True):
+                return False, check_res.get("msg", "Form submission failed.")
+                
             return True, ""
         except Exception as ex:
             return True, ""
