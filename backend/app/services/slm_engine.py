@@ -285,9 +285,9 @@ class SLMEngine:
 
         if "dob" not in processed or not processed["dob"]:
             if ocr_text:
-                dob_match = re.search(r'\b(?:\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4})|(?:[A-Za-z]+\s+\d{1,2},\s+\d{4})\b', ocr_text)
+                dob_match = re.search(r'\b(?:dob|birth|birthdate|date\s+of\s+birth)[\s\S]{1,30}?\b((?:\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4})|(?:[A-Za-z]+\s+\d{1,2},\s+\d{4}))\b', ocr_text, re.IGNORECASE)
                 if dob_match:
-                    processed["dob"] = dob_match.group(0)
+                    processed["dob"] = dob_match.group(1)
 
         # ----------------------------------------------------
         # DOMAIN FIELD CORRECTIONS & POST-PROCESSING
@@ -297,20 +297,20 @@ class SLMEngine:
             processed["gstin_no"] = re.sub(r'[^a-zA-Z0-9]', '', str(processed["gstin_no"])).upper()
 
         # 2. PAN Number Extraction & Correction
-        pan_val = str(processed.get("pan_no", "")).strip()
         is_pan_valid = False
-        if pan_val:
-            cleaned_pan = re.sub(r'[^a-zA-Z0-9]', '', pan_val).upper()
-            corrected_pan = self._clean_and_format_pan(cleaned_pan)
+        gstin_val = processed.get("gstin_no", "")
+        if gstin_val and len(gstin_val) >= 12:
+            pan_candidate = gstin_val[2:12]
+            corrected_pan = self._clean_and_format_pan(pan_candidate)
             if corrected_pan:
                 processed["pan_no"] = corrected_pan
                 is_pan_valid = True
 
         if not is_pan_valid:
-            gstin_val = processed.get("gstin_no", "")
-            if gstin_val and len(gstin_val) >= 12:
-                pan_candidate = gstin_val[2:12]
-                corrected_pan = self._clean_and_format_pan(pan_candidate)
+            pan_val = str(processed.get("pan_no", "")).strip()
+            if pan_val:
+                cleaned_pan = re.sub(r'[^a-zA-Z0-9]', '', pan_val).upper()
+                corrected_pan = self._clean_and_format_pan(cleaned_pan)
                 if corrected_pan:
                     processed["pan_no"] = corrected_pan
                     is_pan_valid = True
@@ -414,6 +414,52 @@ class SLMEngine:
                     flags=re.IGNORECASE
                 ).strip()
                 processed[key] = cleaned_bank
+
+        # 10. Extract Buyer/Customer billing details directly from OCR text to prevent mix-ups and get full address
+        if ocr_text:
+            buyer_match = re.search(
+                r'(?:Buyer\s*\(Bill\s*To\)|Buyer\b|Bill\s*To)\s*[\n:]*\s*([^\n]+)(?:\n\s*([^\n]+))?(?:\n\s*([^\n]+))?(?:\n\s*([^\n]+))?',
+                ocr_text,
+                re.IGNORECASE
+            )
+            if buyer_match:
+                buyer_name = buyer_match.group(1).strip()
+                if not any(kw in buyer_name.lower() for kw in ["gstin", "state", "city", "pan", "phone", "email", "address"]):
+                    processed["full_name"] = buyer_name
+                    
+                    # Gather billing address lines
+                    addr_lines = []
+                    for idx in range(2, 5):
+                        line_val = buyer_match.group(idx)
+                        if line_val:
+                            line_val = line_val.strip()
+                            if not line_val or any(kw in line_val.lower() for kw in ["city", "gstin", "state", "pin", "address", "phone", "email"]):
+                                break
+                            addr_lines.append(line_val)
+                    if addr_lines:
+                        processed["address"] = ", ".join(addr_lines)
+
+        # 11. Extract vendor-specific GSTIN and PAN from the supplier section of the OCR text
+        if ocr_text:
+            buyer_idx = ocr_text.lower().find("buyer")
+            supplier_section = ocr_text[:buyer_idx] if buyer_idx != -1 else ocr_text
+            
+            vendor_gstin_match = re.search(r'\bGSTIN\b[:\s]*([0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z][ZR][0-9A-Z])\b', supplier_section, re.IGNORECASE)
+            if vendor_gstin_match:
+                processed["vendor_gstin"] = vendor_gstin_match.group(1).upper()
+            else:
+                vendor_gstin_match_loose = re.search(r'\bGSTIN\b[:\s]*([A-Z0-9]{15})\b', supplier_section, re.IGNORECASE)
+                if vendor_gstin_match_loose:
+                    processed["vendor_gstin"] = vendor_gstin_match_loose.group(1).upper()
+                    
+            vendor_pan_match = re.search(r'\bPAN\b[:\s]*([A-Z]{5}[0-9]{4}[A-Z]|[A-Z0-9]{10})\b', supplier_section, re.IGNORECASE)
+            if vendor_pan_match:
+                processed["vendor_pan"] = self._clean_and_format_pan(vendor_pan_match.group(1))
+
+        # 12. An invoice/receipt should not have a Date of Birth (DOB)
+        if "dob" in processed and ("invoice_number" in processed or "total_amount" in processed or "vendor_name" in processed):
+            if not re.search(r'\b(?:dob|birth|birthdate|date\s+of\s+birth)\b', ocr_text or "", re.IGNORECASE):
+                del processed["dob"]
                 
         return processed
 
