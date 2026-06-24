@@ -332,9 +332,7 @@ export default function App() {
       if (res.ok) {
         const result = await res.json();
         setFillResult(result);
-        if (result.success) {
-          setShowScreenshot(true);
-        }
+        setShowScreenshot(true);
       } else {
         const err = await res.json();
         alert(`Fill Failed: ${err.detail || 'Internal Error'}`);
@@ -1053,8 +1051,12 @@ export default function App() {
         <div className="fixed inset-0 bg-black/85 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="glass-panel max-w-4xl w-full flex flex-col overflow-hidden max-h-[90vh]">
             <div className="p-4 border-b border-slate-900 flex justify-between items-center bg-slate-950/40">
-              <div className="flex items-center gap-2 text-emerald-400">
-                <CheckCircle className="w-5 h-5 text-emerald-400" />
+              <div className={`flex items-center gap-2 ${fillResult.success ? 'text-emerald-400' : 'text-rose-400'}`}>
+                {fillResult.success ? (
+                  <CheckCircle className="w-5 h-5 text-emerald-400" />
+                ) : (
+                  <AlertCircle className="w-5 h-5 text-rose-400" />
+                )}
                 <span className="font-bold text-sm">Execution Summary Report</span>
               </div>
               <button 
@@ -1110,11 +1112,11 @@ export default function App() {
                                 <td className="summary-table-cell font-medium text-slate-200">{recName}</td>
                                 <td className="summary-table-cell">
                                   <span className={`badge ${res.success ? 'badge-completed' : 'badge-failed'}`}>
-                                    {res.success ? 'Success' : 'Error'}
+                                    {res.success ? 'success' : 'failed'}
                                   </span>
                                 </td>
                                 <td className="summary-table-cell text-slate-400">
-                                  {res.success ? 'Injected successfully and validation satisfied' : res.errors?.join('; ') || 'Record validation failed'}
+                                  {res.success ? 'injected successfully' : res.errors?.join('; ') || 'Record validation failed'}
                                 </td>
                                 <td className="summary-table-cell text-right">
                                   <a 
@@ -1135,12 +1137,26 @@ export default function App() {
                   </div>
                 </div>
               ) : (
-                /* Single verification success comment */
-                <div className="p-4 rounded-xl bg-emerald-500/5 border border-emerald-500/10 flex items-center gap-3">
-                  <CheckCircle className="w-5 h-5 text-emerald-400" />
+                /* Single verification success / failure comment */
+                <div className={`p-4 rounded-xl flex items-center gap-3 ${
+                  fillResult.success 
+                    ? 'bg-emerald-500/5 border border-emerald-500/10' 
+                    : 'bg-rose-500/5 border border-rose-500/10'
+                }`}>
+                  {fillResult.success ? (
+                    <CheckCircle className="w-5 h-5 text-emerald-400" />
+                  ) : (
+                    <AlertCircle className="w-5 h-5 text-rose-400" />
+                  )}
                   <div>
-                    <h4 className="text-xs font-bold text-emerald-400">Single Automation Submission Complete</h4>
-                    <p className="text-[11px] text-slate-400 mt-0.5">Verified record has been correctly mapped and injected. Target page validation satisfied.</p>
+                    <h4 className={`text-xs font-bold ${fillResult.success ? 'text-emerald-400' : 'text-rose-400'}`}>
+                      {fillResult.success ? 'success' : 'failed'}
+                    </h4>
+                    <p className="text-[11px] text-slate-400 mt-0.5">
+                      {fillResult.success 
+                        ? 'injected successfully' 
+                        : fillResult.errors?.join('; ') || 'Record validation failed'}
+                    </p>
                   </div>
                 </div>
               )}

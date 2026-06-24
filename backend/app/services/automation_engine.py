@@ -171,6 +171,35 @@ class PlaywrightAutomationEngine:
             browser.close()
         return form_fields
 
+    def _verify_submission_success(self, page, original_url) -> tuple[bool, str]:
+        # Helper to verify if the form submit succeeded.
+        # Returns (success_boolean, error_message)
+        try:
+            # Check for HTML5 invalid fields
+            invalid_fields = page.query_selector_all("input:invalid, select:invalid, textarea:invalid")
+            if len(invalid_fields) > 0:
+                return False, f"Form submission failed: {len(invalid_fields)} required fields are missing or invalid in the target browser."
+            
+            # Check if URL hasn't changed and required fields are still empty
+            curr_url = page.url
+            if curr_url == original_url:
+                required_empty = page.evaluate("""() => {
+                    let inputs = document.querySelectorAll("input[required], select[required], textarea[required]");
+                    let emptyCount = 0;
+                    for (let elem of inputs) {
+                        if (!elem.value || !elem.value.trim()) {
+                            emptyCount++;
+                        }
+                    }
+                    return emptyCount;
+                }""")
+                if required_empty > 0:
+                    return False, f"Form submission failed: {required_empty} required fields are empty on the page."
+                    
+            return True, ""
+        except Exception as ex:
+            return True, ""
+
     def fill_form(
         self, 
         url: str, 
@@ -571,6 +600,12 @@ class PlaywrightAutomationEngine:
                 except Exception:
                     pass
                 page.wait_for_timeout(4000)
+                
+                # Verify submission success
+                success_status, err_msg = self._verify_submission_success(page, url)
+                if not success_status:
+                    result["success"] = False
+                    result["errors"].append(err_msg)
             else:
                 page.wait_for_timeout(1000)
 
@@ -579,7 +614,7 @@ class PlaywrightAutomationEngine:
             page.screenshot(path=screenshot_path)
             browser.close()
             
-        if len(result["errors"]) > 0 and len(result["filled"]) == 0:
+        if len(result["errors"]) > 0:
             result["success"] = False
             
         return result
@@ -919,6 +954,11 @@ class PlaywrightAutomationEngine:
                     except Exception:
                         pass
                     page.wait_for_timeout(4000)
+                    
+                    # Verify submission success
+                    success_status, err_msg = self._verify_submission_success(page, url)
+                    if not success_status:
+                        record_errors.append(err_msg)
                 else:
                     page.wait_for_timeout(1000)
 
@@ -932,7 +972,7 @@ class PlaywrightAutomationEngine:
 
                 result["results"].append({
                     "record_index": record_idx,
-                    "success": len(record_errors) == 0 or len(filled_selectors) > 0,
+                    "success": len(record_errors) == 0,
                     "filled_fields": filled_selectors,
                     "errors": record_errors
                 })
