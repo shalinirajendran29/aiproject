@@ -1558,6 +1558,446 @@ export default function App() {
     );
   };
 
+  // 7.5 DEDICATED FULLSCREEN ENTERPRISE ADMIN & TELEMETRY CORE SCREEN (Point 1-15 HUD)
+  const renderEnterpriseAdminScreen = () => {
+    return (
+      <div className="flex flex-col gap-6 p-4 bg-slate-900 text-slate-100 rounded-lg border border-slate-800 shadow-2xl font-sans mt-2">
+        {/* Screen Header Bar */}
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 p-4 bg-slate-950 border border-slate-850 rounded-lg shadow-sm">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-orange-600/10 border border-orange-500/25 rounded-lg">
+              <Shield className="w-6 h-6 text-orange-500" />
+            </div>
+            <div className="flex flex-col">
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-xs font-bold uppercase tracking-widest text-slate-100">UNITIVE CONTROL CENTER</span>
+                <span className="text-[9px] font-mono font-bold bg-orange-600 text-white px-1.5 py-0.5 rounded border border-orange-500/30 uppercase tracking-wide">ENTERPRISE SECURITY CORE</span>
+              </div>
+              <span className="text-[10px] text-slate-400 font-medium">Real-Time Threat Protection, Cache Engine Telemetry & Webhook Registry</span>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-4 text-[10px] font-mono">
+            <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 px-3 py-1.5 rounded">
+              <span className="led led-green led-pulse" style={{ width: '6px', height: '6px' }}></span>
+              <span className="text-slate-400">SHIELD SYSTEM:</span>
+              <span className="text-emerald-400 font-bold">ONLINE</span>
+            </div>
+            <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 px-3 py-1.5 rounded">
+              <Database className="w-3.5 h-3.5 text-blue-400" />
+              <span className="text-slate-400">CACHE PERSISTENCE:</span>
+              <span className="text-blue-400 font-bold">{adminMetrics.cache_service_status?.includes("Redis") ? "REDIS_ENGINE" : "IN_MEMORY"}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* 3 Column Top Grid */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          
+          {/* COLUMN 1: LIVE PERFORMANCE & SECURITY STATS */}
+          <div className="flex flex-col gap-6">
+            <div className="bg-slate-950 border border-slate-850 rounded-lg p-4 flex flex-col gap-3">
+              <div className="flex items-center gap-2 border-b border-slate-850 pb-2">
+                <Activity className="w-4 h-4 text-orange-500" />
+                <span className="font-mono text-[10px] font-bold text-slate-300 uppercase tracking-wider">Operational Metrics</span>
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-[10px] font-mono">
+                {[
+                  { label: 'Total Ingested', value: adminMetrics.total_documents, color: 'text-slate-200' },
+                  { label: 'Success Rate', value: `${adminMetrics.success_rate_percent}%`, color: 'text-emerald-400 font-bold' },
+                  { label: 'Error Rate', value: `${adminMetrics.error_rate_percent || 0.0}%`, color: 'text-rose-400' },
+                  { label: 'Active Sessions', value: adminMetrics.active_users || 3, color: 'text-purple-400' },
+                  { label: 'Daily Requests', value: adminMetrics.daily_requests || 0, color: 'text-blue-400' },
+                  { label: 'Active Workers', value: adminMetrics.active_queue_workers, color: 'text-teal-400' }
+                ].map((m, idx) => (
+                  <div key={idx} className="bg-slate-900 border border-slate-800 p-2 rounded flex flex-col gap-1">
+                    <span className="text-[8px] font-bold text-slate-500 uppercase tracking-wider">{m.label}</span>
+                    <span className={`text-[11px] font-bold ${m.color}`}>{m.value}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="bg-slate-950 border border-slate-850 rounded-lg p-4 flex flex-col gap-3">
+              <div className="flex items-center gap-2 border-b border-slate-850 pb-2">
+                <ShieldAlert className="w-4 h-4 text-rose-500" />
+                <span className="font-mono text-[10px] font-bold text-slate-300 uppercase tracking-wider">Security Interceptions</span>
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-[10px] font-mono">
+                <div className="bg-slate-900 border border-slate-800 p-2 rounded flex flex-col gap-1">
+                  <span className="text-[8px] text-slate-500 font-bold uppercase">Malware Quarantined</span>
+                  <span className="text-[11px] text-rose-400 font-bold">{adminMetrics.quarantined_files_blocked} threats</span>
+                </div>
+                <div className="bg-slate-900 border border-slate-800 p-2 rounded flex flex-col gap-1">
+                  <span className="text-[8px] text-slate-500 font-bold uppercase">Prompt Injections</span>
+                  <span className="text-[11px] text-amber-400 font-bold">{adminMetrics.prompt_injections_neutralized} blocks</span>
+                </div>
+                <div className="bg-slate-900 border border-slate-800 p-2 rounded flex flex-col gap-1">
+                  <span className="text-[8px] text-slate-500 font-bold uppercase">Rate Limit Triggers</span>
+                  <span className="text-[11px] text-orange-400 font-bold">{adminMetrics.rate_limit_429_count} (429s)</span>
+                </div>
+                <div className="bg-slate-900 border border-slate-800 p-2 rounded flex flex-col gap-1">
+                  <span className="text-[8px] text-slate-500 font-bold uppercase">Deduplication Hits</span>
+                  <span className="text-[11px] text-emerald-400 font-bold">{adminMetrics.duplicate_cache_hits} inputs</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* COLUMN 2: CACHE METADATA HUD TELEMETRY */}
+          <div className="flex flex-col gap-6">
+            <div className="bg-slate-950 border border-slate-850 rounded-lg p-4 flex flex-col gap-3.5 h-full">
+              <div className="flex justify-between items-center border-b border-slate-850 pb-2">
+                <div className="flex items-center gap-2">
+                  <Database className="w-4 h-4 text-pink-500" />
+                  <span className="font-mono text-[10px] font-bold text-slate-300 uppercase tracking-wider">Enterprise Cache Telemetry HUD</span>
+                </div>
+                <span className="text-[8px] font-mono text-slate-400 font-bold uppercase border border-slate-800 px-1.5 py-0.5 rounded bg-slate-900">active</span>
+              </div>
+              <div className="flex flex-col gap-2 font-mono text-[10px]">
+                <div className="flex justify-between items-center p-2 bg-slate-900 border border-slate-800 rounded">
+                  <span className="text-slate-400 font-medium">Active Cache Driver Mode:</span>
+                  <span className="font-bold text-slate-200">{adminMetrics.cache_service_status || 'InMemory Cache Service'}</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2 mt-1">
+                  <div className="flex flex-col p-2 bg-slate-900 border border-slate-800 rounded text-center">
+                    <span className="text-slate-500 text-[8px] uppercase font-bold tracking-wide">Workspace Settings</span>
+                    <span className="font-bold text-blue-400 text-[9px] mt-1">10m Cache (Active)</span>
+                  </div>
+                  <div className="flex flex-col p-2 bg-slate-900 border border-slate-800 rounded text-center">
+                    <span className="text-slate-500 text-[8px] uppercase font-bold tracking-wide">API key verify</span>
+                    <span className="font-bold text-blue-400 text-[9px] mt-1">10m Cache (Active)</span>
+                  </div>
+                  <div className="flex flex-col p-2 bg-slate-900 border border-slate-800 rounded text-center">
+                    <span className="text-slate-500 text-[8px] uppercase font-bold tracking-wide">OCR Results</span>
+                    <span className="font-bold text-blue-400 text-[9px] mt-1">24h Cache (Active)</span>
+                  </div>
+                  <div className="flex flex-col p-2 bg-slate-900 border border-slate-800 rounded text-center">
+                    <span className="text-slate-500 text-[8px] uppercase font-bold tracking-wide">AI Extraction</span>
+                    <span className="font-bold text-blue-400 text-[9px] mt-1">30d Cache (Active)</span>
+                  </div>
+                  <div className="flex flex-col p-2 bg-slate-900 border border-slate-800 rounded text-center">
+                    <span className="text-slate-500 text-[8px] uppercase font-bold tracking-wide">Sentence Embeddings</span>
+                    <span className="font-bold text-blue-400 text-[9px] mt-1">30d Cache (Active)</span>
+                  </div>
+                  <div className="flex flex-col p-2 bg-slate-900 border border-slate-800 rounded text-center">
+                    <span className="text-slate-500 text-[8px] uppercase font-bold tracking-wide">Results Download</span>
+                    <span className="font-bold text-blue-400 text-[9px] mt-1">10m Cache (Active)</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* COLUMN 3: WEBHOOK & COGNITIVE PRICING */}
+          <div className="flex flex-col gap-6">
+            <div className="bg-slate-950 border border-slate-850 rounded-lg p-4 flex flex-col gap-3.5 h-full">
+              <div className="flex items-center gap-2 border-b border-slate-850 pb-2">
+                <Cpu className="w-4 h-4 text-indigo-400" />
+                <span className="font-mono text-[10px] font-bold text-slate-300 uppercase tracking-wider">Cognitive Extraction Metrics</span>
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-[10px] font-mono">
+                <div className="bg-slate-900 border border-slate-800 p-2 rounded flex flex-col gap-1">
+                  <span className="text-[8px] text-slate-500 font-bold uppercase">Estimated Month Cost</span>
+                  <span className="text-[11px] text-indigo-400 font-bold">${adminMetrics.monthly_cost_usd || 0.0} USD</span>
+                </div>
+                <div className="bg-slate-900 border border-slate-800 p-2 rounded flex flex-col gap-1">
+                  <span className="text-[8px] text-slate-500 font-bold uppercase">Estimated Today Cost</span>
+                  <span className="text-[11px] text-indigo-400 font-bold">${adminMetrics.today_cost_usd || 0.0} USD</span>
+                </div>
+                <div className="bg-slate-900 border border-slate-800 p-2 rounded flex flex-col gap-1 col-span-2">
+                  <span className="text-[8px] text-slate-500 font-bold uppercase">Extraction latency baseline</span>
+                  <div className="flex justify-between items-center text-[10px] mt-1 text-slate-300">
+                    <span>Avg OCR: {adminMetrics.avg_ocr_latency_sec}s</span>
+                    <span>Avg SLM: {adminMetrics.avg_llm_latency_sec}s</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* 2 Column Settings & Keys controls */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Security rule configuration */}
+          <div className="bg-slate-950 border border-slate-850 rounded-lg p-4 flex flex-col gap-4">
+            <div className="flex items-center gap-2 border-b border-slate-850 pb-2">
+              <Sliders className="w-4 h-4 text-indigo-400" />
+              <span className="font-mono text-[10px] font-bold text-slate-300 uppercase tracking-wider">Security Shield Config Toggles</span>
+            </div>
+            
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="flex flex-col gap-1">
+                <div className="flex justify-between text-[9px] font-bold font-mono">
+                  <span className="text-slate-400">Rate Limit (Per API Key)</span>
+                  <span className="text-orange-400">{adminSettings.rate_limit_api_key} req/m</span>
+                </div>
+                <input
+                  type="range"
+                  min="10"
+                  max="500"
+                  step="10"
+                  value={adminSettings.rate_limit_api_key}
+                  onChange={(e) => saveAdminSettings({ ...adminSettings, rate_limit_api_key: parseInt(e.target.value) })}
+                  className="w-full accent-orange-500 cursor-pointer h-1 rounded-lg"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <div className="flex justify-between text-[9px] font-bold font-mono">
+                  <span className="text-slate-400">Rate Limit (Unauth Per IP)</span>
+                  <span className="text-orange-400">{adminSettings.rate_limit_ip} req/m</span>
+                </div>
+                <input
+                  type="range"
+                  min="5"
+                  max="100"
+                  step="5"
+                  value={adminSettings.rate_limit_ip}
+                  onChange={(e) => saveAdminSettings({ ...adminSettings, rate_limit_ip: parseInt(e.target.value) })}
+                  className="w-full accent-orange-500 cursor-pointer h-1 rounded-lg"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <div className="flex justify-between text-[9px] font-bold font-mono">
+                  <span className="text-slate-400">Max File Size Ingestion</span>
+                  <span className="text-blue-400">{adminSettings.max_file_size_mb} MB</span>
+                </div>
+                <input
+                  type="range"
+                  min="1"
+                  max="100"
+                  step="1"
+                  value={adminSettings.max_file_size_mb}
+                  onChange={(e) => saveAdminSettings({ ...adminSettings, max_file_size_mb: parseInt(e.target.value) })}
+                  className="w-full accent-blue-500 cursor-pointer h-1 rounded-lg"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <div className="flex justify-between text-[9px] font-bold font-mono">
+                  <span className="text-slate-400">Data retention days</span>
+                  <span className="text-blue-400">{adminSettings.data_retention_days} days</span>
+                </div>
+                <input
+                  type="range"
+                  min="7"
+                  max="365"
+                  step="7"
+                  value={adminSettings.data_retention_days}
+                  onChange={(e) => saveAdminSettings({ ...adminSettings, data_retention_days: parseInt(e.target.value) })}
+                  className="w-full accent-blue-500 cursor-pointer h-1 rounded-lg"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1 sm:col-span-2">
+                <span className="text-[9px] font-bold text-slate-400">Allowed extensions (comma separated)</span>
+                <input
+                  type="text"
+                  value={adminSettings.allowed_extensions.join(', ')}
+                  onChange={(e) => saveAdminSettings({ ...adminSettings, allowed_extensions: e.target.value.split(',').map(s => s.trim().toLowerCase()).filter(Boolean) })}
+                  className="bg-slate-900 border border-slate-800 rounded px-2.5 py-1 text-xs text-slate-200 focus:outline-none focus:border-slate-700 mt-1 font-mono"
+                />
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-2 border-t border-slate-850 pt-3">
+              {[
+                { key: 'virus_scanning_enabled', label: 'Enable ClamAV Quarantine / Malware Scan' },
+                { key: 'prompt_injection_protection', label: 'Enable Precompiled System Override Prompt Injection Protection' },
+                { key: 'duplicate_detection_sha256', label: 'Enable SHA-256 Request Deduplication Cache' }
+              ].map(item => (
+                <label key={item.key} className="flex items-center gap-2 cursor-pointer text-[10px] font-mono text-slate-400">
+                  <input
+                    type="checkbox"
+                    checked={adminSettings[item.key]}
+                    onChange={(e) => saveAdminSettings({ ...adminSettings, [item.key]: e.target.checked })}
+                    className="rounded border-slate-800 bg-slate-900 text-orange-600 focus:ring-orange-500"
+                  />
+                  <span>{item.label}</span>
+                </label>
+              ))}
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 border-t border-slate-850 pt-3">
+              <div className="flex flex-col gap-1 sm:col-span-2">
+                <span className="text-[9px] font-bold text-slate-400">Webhook Endpoint URL</span>
+                <input
+                  type="text"
+                  placeholder="https://client-system.com/webhooks"
+                  value={adminSettings.webhook_url}
+                  onChange={(e) => saveAdminSettings({ ...adminSettings, webhook_url: e.target.value })}
+                  className="bg-slate-900 border border-slate-800 rounded px-2.5 py-1 text-xs text-slate-200 mt-1 font-mono"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <span className="text-[9px] font-bold text-slate-400">HMAC Secret Signing Key</span>
+                <div className="flex gap-1.5 mt-1">
+                  <input
+                    type="text"
+                    readOnly
+                    value={adminSettings.webhook_secret}
+                    className="bg-slate-900 border border-slate-800 rounded px-2.5 py-1 text-[9px] text-slate-400 font-mono grow select-all"
+                  />
+                  <button
+                    onClick={() => saveAdminSettings({ ...adminSettings, webhook_secret: `unitive_hmac_${Math.random().toString(36).substring(2, 10)}` })}
+                    className="px-2 py-1 bg-slate-800 border border-slate-700 hover:bg-slate-700 text-white rounded text-[8px] font-bold font-mono transition-colors"
+                  >
+                    ROTATE
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Workspace API Keys list */}
+          <div className="bg-slate-950 border border-slate-850 rounded-lg p-4 flex flex-col gap-4">
+            <div className="flex justify-between items-center border-b border-slate-850 pb-2">
+              <div className="flex items-center gap-2">
+                <Key className="w-4 h-4 text-emerald-400" />
+                <span className="font-mono text-[10px] font-bold text-slate-300 uppercase tracking-wider">Workspace API Keys Registry</span>
+              </div>
+              <button
+                onClick={() => {
+                  const ws = prompt("Enter Workspace Name:", "Billing Office");
+                  const name = prompt("Enter Key Name/Owner:", "Production Core key");
+                  const role = prompt("Enter Role (Admin / Developer / Read Only):", "Developer");
+                  if (ws && name && role) {
+                    setNewKeyWorkspace(ws);
+                    setNewKeyName(name);
+                    setNewKeyRole(role);
+                    setTimeout(() => handleCreateAPIKey(), 100);
+                  }
+                }}
+                className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-[9px] font-bold font-mono flex items-center gap-1 transition-all"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>GENERATE CREDENTIAL</span>
+              </button>
+            </div>
+
+            {newlyCreatedKey && (
+              <div className="p-3 bg-emerald-950 border border-emerald-800 rounded text-emerald-200 text-[10px] flex flex-col gap-1.5 font-mono shadow-sm">
+                <span className="font-bold text-emerald-400 uppercase">[!] SECURE PLAIN-TEXT API KEY GENERATED:</span>
+                <div className="flex gap-2 items-center bg-slate-900 border border-emerald-900 p-1.5 rounded">
+                  <span className="text-white font-bold select-all flex-1 text-xs truncate">{newlyCreatedKey.raw_key}</span>
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(newlyCreatedKey.raw_key);
+                      alert("Plaintext key copied! Save it now. It will not be shown again.");
+                    }}
+                    className="px-2 py-0.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-[9px]"
+                  >
+                    COPY KEY
+                  </button>
+                </div>
+                <span className="text-[8px] text-slate-400">Hashed securely under SHA-256 database layers. Cannot be restored.</span>
+              </div>
+            )}
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left font-mono text-[9px] border-collapse divide-y divide-slate-800">
+                <thead>
+                  <tr className="bg-slate-900/50 text-slate-400 font-bold">
+                    <th className="p-2">Name</th>
+                    <th className="p-2">Workspace</th>
+                    <th className="p-2">Prefix</th>
+                    <th className="p-2">Role</th>
+                    <th className="p-2">Status</th>
+                    <th className="p-2 text-right">Control</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-850">
+                  {adminKeys.map((k) => (
+                    <tr key={k.key_id} className="hover:bg-slate-900/40">
+                      <td className="p-2 font-semibold text-slate-200">{k.name}</td>
+                      <td className="p-2 text-slate-400">{k.workspace}</td>
+                      <td className="p-2 text-slate-300 font-bold">{k.prefix}</td>
+                      <td className="p-2">
+                        <span className={`px-1.5 py-0.5 rounded text-[8px] font-bold ${
+                          k.role === 'Admin' ? 'bg-rose-950/40 text-rose-400 border border-rose-900/50' :
+                          k.role === 'Developer' ? 'bg-blue-950/40 text-blue-400 border border-blue-900/50' :
+                          'bg-slate-900 text-slate-400 border border-slate-800'
+                        }`}>{k.role.toUpperCase()}</span>
+                      </td>
+                      <td className="p-2">
+                        <span className={`px-1.5 py-0.5 rounded text-[8px] font-bold ${
+                          k.status === 'active' ? 'bg-emerald-950/40 text-emerald-400 border border-emerald-900/50' : 'bg-rose-950 text-rose-400 border border-rose-900'
+                        }`}>{k.status.toUpperCase()}</span>
+                      </td>
+                      <td className="p-2 text-right">
+                        <div className="flex justify-end gap-1">
+                          {k.status === 'active' && (
+                            <>
+                              <button
+                                onClick={() => handleRotateKey(k.key_id)}
+                                className="px-1.5 py-0.5 bg-slate-900 border border-slate-800 hover:bg-slate-800 rounded text-[8px] text-slate-300"
+                              >
+                                ROTATE
+                              </button>
+                              <button
+                                onClick={() => handleRevokeKey(k.key_id)}
+                                className="px-1.5 py-0.5 bg-rose-950/40 border border-rose-900/50 text-rose-400 hover:bg-rose-900 rounded text-[8px]"
+                              >
+                                REVOKE
+                              </button>
+                            </>
+                          )}
+                          <button
+                            onClick={() => handleDeleteKey(k.key_id)}
+                            className="p-1 text-slate-400 hover:text-rose-400 rounded"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        {/* Audit Log Terminal Screen Panel */}
+        <div className="bg-slate-950 border border-slate-850 rounded-lg p-4 flex flex-col gap-3 font-mono text-[10px]">
+          <div className="flex justify-between items-center border-b border-slate-850 pb-2">
+            <div className="flex items-center gap-2">
+              <Terminal className="w-4 h-4 text-orange-500" />
+              <span className="font-bold uppercase tracking-wider text-slate-300">Live Security and System Auditing Log Terminal</span>
+            </div>
+            <button
+              onClick={handleClearAdminLogs}
+              className="px-2.5 py-1.5 bg-slate-900 border border-slate-800 hover:bg-slate-800 text-slate-400 hover:text-white rounded text-[9px] transition-colors"
+            >
+              [PURGE_LOGS_DATABASE]
+            </button>
+          </div>
+          
+          <div className="h-[300px] overflow-y-auto bg-slate-950 border border-slate-900 rounded p-3 flex flex-col gap-2 custom-scrollbar">
+            {adminLogs.map((log, idx) => (
+              <div key={idx} className="flex gap-2.5 py-1 hover:bg-slate-900/60 rounded px-1">
+                <span className="text-slate-600 select-none text-[8.5px] font-semibold">
+                  {new Date(log.timestamp).toLocaleTimeString()}
+                </span>
+                <span className={`text-[8px] px-1 font-bold rounded shrink-0 select-none ${
+                  log.level === 'WARNING' ? 'bg-red-950/40 text-red-400 border border-red-900/50' :
+                  log.event_type === 'auth' ? 'bg-emerald-950/40 text-emerald-400 border border-emerald-900/50' :
+                  log.event_type === 'ratelimit' ? 'bg-amber-950/40 text-amber-400 border border-amber-900/50' :
+                  'bg-slate-900 text-slate-400 border border-slate-800'
+                }`}>
+                  {log.level}
+                </span>
+                <span className="text-slate-400 select-none font-bold">[{log.event_type.toUpperCase()}]</span>
+                <span className="text-slate-200 select-text font-sans mt-0.5">{log.message}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   // 8. ENTERPRISE ADMIN CONSOLE PLUGIN
   const renderAdminPlugin = () => {
     if (!activePlugins.admin) return null;
@@ -2031,8 +2471,37 @@ export default function App() {
           </div>
         </div>
 
-        {/* System Session Status */}
-        <div className="flex items-center gap-4">
+        {/* Navigation Switch Board & Session Status */}
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1 bg-slate-100 border border-slate-200 p-0.5 rounded-lg">
+            <button
+              onClick={() => {
+                setLayout('command');
+                addLog('Switched view to Operations Deck.', 'sys');
+              }}
+              className={`px-3 py-1.5 font-mono text-[9px] font-bold rounded transition-all ${
+                layout !== 'admin'
+                  ? 'bg-slate-900 text-white shadow-sm'
+                  : 'text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              OPERATIONS DECK
+            </button>
+            <button
+              onClick={() => {
+                setLayout('admin');
+                addLog('Switched view to Security & Telemetry Control Screen.', 'sys');
+              }}
+              className={`px-3 py-1.5 font-mono text-[9px] font-bold rounded transition-all ${
+                layout === 'admin'
+                  ? 'bg-orange-600 text-white shadow-sm'
+                  : 'text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              SECURITY CONTROL
+            </button>
+          </div>
+
           <div className="flex items-center gap-1.5 text-xs text-emerald-600 font-mono bg-emerald-500/5 px-3 py-1.5 rounded border border-emerald-500/10">
             <span className="led led-green led-pulse" style={{ width: '6px', height: '6px' }}></span>
             <span>SECURE SYSTEM LINK ESTABLISHED</span>
@@ -2127,6 +2596,7 @@ export default function App() {
             <option value="command">Command Console (3-Col)</option>
             <option value="split">Split Workspace (2-Col)</option>
             <option value="focus">Focus Frame (Tabbed)</option>
+            <option value="admin">Enterprise Control (FullScreen)</option>
           </select>
         </div>
       </section>
@@ -2235,6 +2705,9 @@ export default function App() {
             {focusTab === 'admin' && renderAdminPlugin()}
           </div>
         )}
+
+        {/* LAYOUT 4: DEDICATED FULLSCREEN ENTERPRISE ADMIN SCREEN */}
+        {layout === 'admin' && renderEnterpriseAdminScreen()}
       </main>
 
       {/* Corporate Verification Summary Modal */}
