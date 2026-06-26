@@ -56,10 +56,40 @@ const STANDARD_FIELDS = [
 ];
 
 export default function App() {
+  // Read parent origin from query parameters for secure postMessage events (Point 5)
+  const urlParams = new URLSearchParams(window.location.search);
+  const parentOrigin = urlParams.get('parentOrigin') || '*';
+
   // Connection states
   const [backendOnline, setBackendOnline] = useState(false);
+  const [offlineQueue, setOfflineQueue] = useState([]);
+  const [sessionToken, setSessionToken] = useState(null);
   const [slmInfo, setSlmInfo] = useState({ model: 'Qwen2.5-7B-Instruct', url: 'Ollama-local' });
   const [loadingStats, setLoadingStats] = useState(true);
+
+  // Helper to emit SDK events to the host ERP page (Point 16)
+  const emitSdkEvent = (action, data = {}) => {
+    if (window.parent && window !== window.parent) {
+      window.parent.postMessage({ action, ...data }, parentOrigin);
+    }
+  };
+
+  // Secure API fetch helper appending authorization headers and correlation ID (Point 1, 4, 10)
+  const secureFetch = async (url, options = {}) => {
+    const headers = options.headers ? { ...options.headers } : {};
+    if (sessionToken) {
+      headers['Authorization'] = `Bearer ${sessionToken}`;
+    }
+    // Generate correlation ID if not present
+    if (!headers['X-Correlation-ID']) {
+      headers['X-Correlation-ID'] = `corr_${Math.random().toString(36).substring(2, 10)}`;
+    }
+    return fetch(url, {
+      ...options,
+      headers
+    });
+  };
+
 
   // Ingestion settings
   const [ingestionMode, setIngestionMode] = useState('single'); // 'single', 'multiple', 'excel', 'pdf', 'word'
@@ -195,7 +225,7 @@ export default function App() {
   // Fetch all documents
   const fetchDocuments = async () => {
     try {
-      const res = await fetch('/api/v1/documents');
+      const res = await secureFetch('/api/v1/documents');
       if (res.ok) {
         const data = await res.json();
         
@@ -220,20 +250,25 @@ export default function App() {
             if (updatedDoc.status === 'completed' && uploadProgress !== 'completed') {
               setUploadProgress('completed');
               addLog(`SLM extraction complete for document: ${updatedDoc.filename}`, 'slm');
+              emitSdkEvent('UNITIVE_EVENT_COMPLETED', { data: updatedDoc });
             } else if (updatedDoc.status === 'failed' && uploadProgress !== 'failed') {
               setUploadProgress('failed');
               addLog(`Ingestion PIPELINE FAILED for document: ${updatedDoc.filename}`, 'sys');
+              emitSdkEvent('UNITIVE_EVENT_ERROR', { message: 'Document parsing failed' });
             } else if (updatedDoc.status === 'processing') {
               if (updatedDoc.ocr_raw_text && uploadProgress !== 'slm') {
                 setUploadProgress('slm');
                 addLog('Ollama ExtractFlow LLM processing layout tokens...', 'slm');
+                emitSdkEvent('UNITIVE_EVENT_AI_STARTED', { filename: updatedDoc.filename });
               } else if (!updatedDoc.ocr_raw_text && uploadProgress !== 'ocr') {
                 setUploadProgress('ocr');
                 addLog('OpenCV Preprocessing & Tesseract OCR active.', 'ocr');
+                emitSdkEvent('UNITIVE_EVENT_OCR_STARTED', { filename: updatedDoc.filename });
               }
             } else if (updatedDoc.status === 'pending' && uploadProgress !== 'preprocessing') {
               setUploadProgress('preprocessing');
               addLog('Document placed in background queue. Analyzing geometry...', 'sys');
+              emitSdkEvent('UNITIVE_EVENT_UPLOAD_PROGRESS', { filename: updatedDoc.filename, stage: 'preprocessing' });
             }
           }
         }
@@ -256,7 +291,7 @@ export default function App() {
   const fetchStats = async () => {
     setLoadingStats(true);
     try {
-      const rootRes = await fetch('/api/v1/documents').catch(() => null);
+      const rootRes = await secureFetch('/api/v1/documents').catch(() => null);
       if (rootRes && rootRes.ok) {
         setBackendOnline(true);
         addLog('FastAPI host connection handshake: SECURE.', 'sys');
@@ -273,7 +308,7 @@ export default function App() {
 
   const fetchAdminSettings = async () => {
     try {
-      const res = await fetch('/api/v1/admin/settings');
+      const res = await secureFetch('/api/v1/admin/settings');
       if (res.ok) {
         const data = await res.json();
         setAdminSettings(data);
@@ -286,9 +321,9 @@ export default function App() {
   const fetchAdminData = async () => {
     try {
       const [logsRes, metricsRes, keysRes] = await Promise.all([
-        fetch('/api/v1/admin/logs'),
-        fetch('/api/v1/admin/metrics'),
-        fetch('/api/v1/admin/keys')
+        secureFetch('/api/v1/admin/logs'),
+        secureFetch('/api/v1/admin/metrics'),
+        secureFetch('/api/v1/admin/keys')
       ]);
       
       if (logsRes.ok) {
@@ -310,7 +345,7 @@ export default function App() {
 
   const saveAdminSettings = async (updatedSettings) => {
     try {
-      const res = await fetch('/api/v1/admin/settings', {
+      const res = await secureFetch('/api/v1/admin/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updatedSettings)
@@ -331,7 +366,7 @@ export default function App() {
       return;
     }
     try {
-      const res = await fetch('/api/v1/admin/keys', {
+      const res = await secureFetch('/api/v1/admin/keys', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -356,7 +391,7 @@ export default function App() {
   const handleRotateKey = async (keyId) => {
     if (!confirm("Are you sure you want to rotate this API key? Plaintext key will change, and the old key will immediately stop working.")) return;
     try {
-      const res = await fetch('/api/v1/admin/keys/rotate', {
+      const res = await secureFetch('/api/v1/admin/keys/rotate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ key_id: keyId })
@@ -375,7 +410,7 @@ export default function App() {
   const handleRevokeKey = async (keyId) => {
     if (!confirm("Are you sure you want to revoke this API key? This cannot be undone.")) return;
     try {
-      const res = await fetch('/api/v1/admin/keys/revoke', {
+      const res = await secureFetch('/api/v1/admin/keys/revoke', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ key_id: keyId })
@@ -392,7 +427,7 @@ export default function App() {
   const handleDeleteKey = async (keyId) => {
     if (!confirm("Are you sure you want to delete this API key from the database record?")) return;
     try {
-      const res = await fetch('/api/v1/admin/keys/delete', {
+      const res = await secureFetch('/api/v1/admin/keys/delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ key_id: keyId })
@@ -409,7 +444,7 @@ export default function App() {
   const handleClearAdminLogs = async () => {
     if (!confirm("Are you sure you want to purge all administrative security audit logs?")) return;
     try {
-      const res = await fetch('/api/v1/admin/logs/clear', { method: 'POST' });
+      const res = await secureFetch('/api/v1/admin/logs/clear', { method: 'POST' });
       if (res.ok) {
         fetchAdminData();
         addLog("Administrative audit logs purged.", "sys");
@@ -417,6 +452,81 @@ export default function App() {
     } catch (e) {
       console.error("Error clearing logs:", e);
     }
+  };
+
+  // Load offline queue on mount
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('unitive_offline_queue');
+      if (saved) {
+        setOfflineQueue(JSON.parse(saved));
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  }, []);
+
+  // Trigger offline sync when backend goes online
+  useEffect(() => {
+    if (backendOnline && offlineQueue.length > 0) {
+      syncOfflineQueue();
+    }
+  }, [backendOnline, offlineQueue.length]);
+
+  const addToOfflineQueue = (file) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64Data = reader.result;
+      const queueItem = {
+        id: Math.random().toString(36).substring(7),
+        name: file.name,
+        type: file.type,
+        data: base64Data,
+        timestamp: new Date().toISOString()
+      };
+      setOfflineQueue(prev => {
+        const next = [...prev, queueItem];
+        localStorage.setItem('unitive_offline_queue', JSON.stringify(next));
+        return next;
+      });
+      addLog(`Added '${file.name}' to offline upload queue. Will sync when reconnected.`, 'sys');
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const syncOfflineQueue = async () => {
+    if (offlineQueue.length === 0) return;
+    addLog(`Backend online. Syncing ${offlineQueue.length} queued upload(s)...`, 'sys');
+    const items = [...offlineQueue];
+    for (const item of items) {
+      try {
+        const resBlob = await fetch(item.data);
+        const blob = await resBlob.blob();
+        const file = new File([blob], item.name, { type: item.type });
+        
+        const formData = new FormData();
+        formData.append('file', file);
+        
+        const uploadRes = await secureFetch('/api/v1/documents/upload', {
+          method: 'POST',
+          body: formData
+        });
+        
+        if (uploadRes.ok) {
+          addLog(`Offline sync succeeded for: ${item.name}`, 'sys');
+          setOfflineQueue(prev => {
+            const next = prev.filter(q => q.id !== item.id);
+            localStorage.setItem('unitive_offline_queue', JSON.stringify(next));
+            return next;
+          });
+        }
+      } catch (err) {
+        console.error("Failed to sync offline item:", item.name, err);
+        addLog("Offline sync retry failed, will retry later.", "sys");
+        break; // stop loop to retry later
+      }
+    }
+    fetchDocuments();
   };
 
   useEffect(() => {
@@ -427,9 +537,40 @@ export default function App() {
     setTargetUrl('http://erpretails.s3-website.ap-south-1.amazonaws.com/admin/customer/form?type=create');
     const interval = setInterval(() => {
       fetchAdminData();
+      fetchStats(); // Update connection status periodically!
     }, 4000);
-    return () => clearInterval(interval);
-  }, []);
+
+    // Event listener for parent ERP messages (Requirement 5 & 6)
+    const handleWindowMessage = (event) => {
+      if (parentOrigin !== '*' && event.origin !== parentOrigin) {
+        console.warn(`[Unitive App] Origin validation failed. Blocked message from: ${event.origin}`);
+        return;
+      }
+
+      const payload = event.data;
+      if (!payload || typeof payload !== 'object') return;
+
+      if (payload.action === 'PING') {
+        event.source.postMessage({ action: 'PONG' }, event.origin);
+      } else if (payload.action === 'UNITIVE_INIT_SESSION') {
+        if (payload.sessionToken) {
+          setSessionToken(payload.sessionToken);
+          addLog('Widget session token authenticated securely.', 'sys');
+          emitSdkEvent('UNITIVE_EVENT_AUTH_SUCCESS', { workspace: 'Unitive Workspace' });
+        }
+      }
+    };
+
+    window.addEventListener('message', handleWindowMessage);
+    
+    // Emit widget ready event to parent (Requirement 16)
+    emitSdkEvent('UNITIVE_EVENT_READY');
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('message', handleWindowMessage);
+    };
+  }, [parentOrigin]);
 
   // Upload file handler supporting single and batch uploads
   const handleUpload = async (e) => {
@@ -439,6 +580,13 @@ export default function App() {
     setFillResult(null);
     setBulkResult(null);
     setCrawledFields([]);
+
+    if (!backendOnline) {
+      addLog(`Backend offline. Queueing ${selectedFiles.length} file(s) for offline sync...`, 'sys');
+      selectedFiles.forEach(file => addToOfflineQueue(file));
+      return;
+    }
+
     setUploadProgress('uploading');
     addLog(`Initiating packet upload of ${selectedFiles.length} file(s)...`, 'sys');
 
@@ -449,7 +597,7 @@ export default function App() {
       addLog(`Uploading file buffer: ${file.name} (${Math.round(file.size / 1024)} KB)`, 'db');
 
       try {
-        const res = await fetch('/api/v1/documents/upload', {
+        const res = await secureFetch('/api/v1/documents/upload', {
           method: 'POST',
           body: formData
         });
@@ -546,7 +694,7 @@ export default function App() {
     const dataToSend = documentData.corrected_json || documentData.extracted_json || {};
     addLog('Submitting manual corrections to database mapping layer...', 'db');
     try {
-      const res = await fetch(`/api/v1/documents/${documentId}/review`, {
+      const res = await secureFetch(`/api/v1/documents/${documentId}/review`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ corrected_json: dataToSend })
@@ -569,7 +717,7 @@ export default function App() {
     setCrawling(true);
     addLog(`Initiating crawling scan on URL: ${targetUrl}`, 'auto');
     try {
-      const res = await fetch('/api/v1/automation/crawl', {
+      const res = await secureFetch('/api/v1/automation/crawl', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: targetUrl })
@@ -610,7 +758,7 @@ export default function App() {
     }
 
     try {
-      const res = await fetch('/api/v1/automation/fill', {
+      const res = await secureFetch('/api/v1/automation/fill', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(bodyData)
@@ -646,7 +794,7 @@ export default function App() {
     addLog(`Bulk injection URL target: ${targetUrl}`, 'auto');
 
     try {
-      const res = await fetch('/api/v1/automation/fill-bulk', {
+      const res = await secureFetch('/api/v1/automation/fill-bulk', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -707,7 +855,7 @@ export default function App() {
       addLog(`[Batch Item ${i+1}/${completedDocs.length}] Starting form fill for: ${doc.filename}`, 'auto');
 
       try {
-        const res = await fetch('/api/v1/automation/fill', {
+        const res = await secureFetch('/api/v1/automation/fill', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -964,7 +1112,7 @@ export default function App() {
                           e.stopPropagation();
                           if (confirm(`Delete database entry "${doc.filename}"?`)) {
                             try {
-                              const res = await fetch(`/api/v1/documents/${doc.id}`, { method: 'DELETE' });
+                              const res = await secureFetch(`/api/v1/documents/${doc.id}`, { method: 'DELETE' });
                               if (res.ok) {
                                 addLog(`Deleted document entry: ${doc.filename}`, 'db');
                                 if (selectedDocId === doc.id) {
@@ -2438,6 +2586,19 @@ export default function App() {
 
   return (
     <div className="smartfill-plugin-root min-h-screen p-4 text-slate-700">
+      {!backendOnline && (
+        <div className="bg-red-50 text-red-700 border border-red-200 rounded-md p-3 mb-4 flex items-center justify-between shadow-sm">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-red-500 animate-pulse" />
+            <span className="font-semibold text-xs">Unitive Technologies host connection lost. Attempting to reconnect...</span>
+          </div>
+          {offlineQueue.length > 0 && (
+            <span className="bg-red-200/80 px-2 py-0.5 rounded text-[10px] font-mono font-bold text-red-800">
+              {offlineQueue.length} upload(s) queued offline
+            </span>
+          )}
+        </div>
+      )}
       <div className="unitive-workspace-wrapper">
         {/* Brand Header */}
       <header className="glass-panel flex flex-col md:flex-row justify-between items-center gap-4 mb-4" style={{ padding: '12px 20px', borderLeft: '4px solid var(--accent-color)' }}>

@@ -11,12 +11,16 @@ The Unitive module runs as a self-contained, containerized service that can be e
 ```mermaid
 sequenceDiagram
     participant ERP as Client ERP UI
+    participant HostSrv as Host Backend Server
     participant SDK as Unitive Mounter SDK
     participant API as FastAPI Backend (Port 8000)
     participant Redis as Redis Cache Tier
     participant DB as SQLite/PostgreSQL Database
 
-    ERP->>SDK: Initialize and Mount (UnitiveWidget.init)
+    HostSrv->>API: POST /api/v1/admin/session/create (Auth via API Key)
+    API-->>HostSrv: Return short-lived Session Token (uni_sess_...)
+    HostSrv->>ERP: Inject Session Token in page load
+    ERP->>SDK: Initialize and Mount with Session Token
     SDK->>ERP: Render Shadow DOM Form Embed
     ERP->>SDK: Upload Invoice Document (Drag & Drop)
     SDK->>API: Ingest File (POST /api/v1/documents/upload)
@@ -48,145 +52,240 @@ Place the following script tag in the HTML head of your ERP page:
 <script src="https://cdn.unitive.in/sdk/v1/mounter.js" defer></script>
 ```
 
-### B. Initialization & DOM Mount Selector
-Create a target container element where the widget should render and initialize the plugin:
+### B. Secure Token Handshake (No API Keys in URL)
+Avoid putting sensitive API keys in client-side script code or iframe query parameters. 
+First, make a server-to-server request from your ERP's backend application to retrieve a short-lived, origin-locked bearer session token:
+
+```http
+POST /api/v1/admin/session/create HTTP/1.1
+Host: api.unitive.in
+Content-Type: application/json
+Authorization: Bearer <Your_Secret_Live_API_Key>
+
+{
+  "api_key": "uni_live_dev1234567890abcdef...",
+  "allowed_origin": "https://erp.yourcompany.com"
+}
+```
+
+**Response:**
+```json
+{
+  "session_token": "uni_sess_902abc123fed...",
+  "expires_in_sec": 900,
+  "allowed_origin": "https://erp.yourcompany.com",
+  "permissions": ["read", "write"]
+}
+```
+
+### C. Initialization (Vanilla JavaScript Example)
+Create a target container element and initialize the widget with the short-lived token:
 
 ```html
-<!-- Container element inside your ERP Form wrapper -->
 <div id="unitive-automation-root"></div>
 
 <script>
   window.addEventListener('DOMContentLoaded', () => {
-    // Initialize the Unitive Widget
     UnitiveWidget.init({
       containerId: 'unitive-automation-root',
-      apiKey: 'uni_live_dev1234567890abcdef...', // Hashed on the backend
-      workspaceId: 'ws_default_workspace',
-      targetFormUrl: window.location.href, // Auto-detect current ERP input form fields
+      sessionToken: 'uni_sess_902abc123fed...', // Short-lived session token (Point 1 & 4)
+      backendUrl: 'https://api.unitive.in',
       theme: 'dark', // 'dark' | 'light' | 'boxy'
-      onUploadStarted: (filename) => {
-        console.log(`[Unitive] Ingesting document: ${filename}`);
-      },
-      onProcessComplete: (data) => {
-        console.log('[Unitive] Extraction completed successfully:', data.extracted_json);
-      },
-      onFillComplete: (result) => {
-        console.log('[Unitive] ERP form fields successfully mapped and filled:', result);
-      },
-      onError: (error) => {
-        console.error('[Unitive] Ingestion error:', error.message);
-      }
+      
+      // Heartbeats & Lifecycle events (Point 6 & 16)
+      onWidgetReady: () => console.log('[Unitive] Widget is ready.'),
+      onAuthSuccess: (data) => console.log('[Unitive] Authenticated in workspace:', data.workspace),
+      onUploadStarted: (data) => console.log(`[Unitive] Uploading: ${data.filename}`),
+      onUploadProgress: (data) => console.log(`[Unitive] File: ${data.filename}, Stage: ${data.stage}`),
+      onOCRStarted: (data) => console.log('[Unitive] OCR Extraction starting...'),
+      onAIStarted: (data) => console.log('[Unitive] SLM parsing initialized...'),
+      onComplete: (data) => console.log('[Unitive] Extraction success:', data.extracted_json),
+      onFillComplete: (mappings) => console.log('[Unitive] Form inputs populated:', mappings),
+      onDisconnected: () => console.warn('[Unitive] Connection lost.'),
+      onReconnected: () => console.log('[Unitive] Connection restored.'),
+      onError: (err) => console.error('[Unitive] Error:', err.message)
     });
   });
 </script>
 ```
 
-### C. Standard JS Mounter Implementation (SDK Source)
-The underlying `mounter.js` code dynamically constructs the iframe or Shadow DOM tree:
+---
 
-```javascript
-// mounter.js - Unitive Technologies SDK Core
-(function(window) {
-  const UnitiveWidget = {
-    init: function(config) {
-      const container = document.getElementById(config.containerId);
-      if (!container) {
-        console.error('Unitive Widget: Container ID element not found.');
-        return;
-      }
+## 3. Web Framework Integration Snippets
 
-      // Create Shadow DOM to encapsulate styling
-      const shadowRoot = container.attachShadow({ mode: 'open' });
+### A. React Integration
+```jsx
+import React, { useEffect, useRef } from 'react';
 
-      // Embed widget stylesheet
-      const link = document.createElement('link');
-      link.rel = 'stylesheet';
-      link.href = 'https://cdn.unitive.in/sdk/v1/styles.css';
-      shadowRoot.appendChild(link);
+export const UnitiveWidgetComponent = ({ sessionToken }) => {
+  const containerRef = useRef(null);
+  const widgetRef = useRef(null);
 
-      // Create Iframe connector pointing to static dist dashboard
-      const iframe = document.createElement('iframe');
-      iframe.src = `https://dashboard.unitive.in/?embed=true&apiKey=${config.apiKey}&theme=${config.theme}&targetUrl=${encodeURIComponent(config.targetFormUrl)}`;
-      iframe.style.width = '100%';
-      iframe.style.height = '600px';
-      iframe.style.border = 'none';
-      iframe.style.borderRadius = '8px';
-      iframe.style.boxShadow = '0 4px 12px rgba(0, 0, 0, 0.1)';
-      
-      shadowRoot.appendChild(iframe);
-
-      // Listener for child postMessage actions (e.g. form filling commands)
-      window.addEventListener('message', (event) => {
-        if (event.origin !== 'https://dashboard.unitive.in') return;
-        
-        const payload = event.data;
-        if (payload.action === 'UNITIVE_FILL_FORM') {
-          this.executeFormFilling(payload.mappings);
-          if (config.onFillComplete) config.onFillComplete(payload.mappings);
+  useEffect(() => {
+    if (containerRef.current) {
+      window.UnitiveWidget.init({
+        containerId: 'unitive-widget-container',
+        sessionToken: sessionToken,
+        backendUrl: 'https://api.unitive.in',
+        theme: 'light',
+        onComplete: (data) => {
+          console.log('React Callback complete:', data);
         }
+      }).then(widget => {
+        widgetRef.current = widget;
       });
-    },
-
-    executeFormFilling: function(mappings) {
-      // Direct DOM traversal & mapping inside Host ERP Form
-      for (const [selector, value] of Object.entries(mappings)) {
-        const input = document.querySelector(`[name="${selector}"], #${selector}, .form-control-${selector}`);
-        if (input) {
-          input.value = value;
-          // Dispatch input event to trigger React/Angular/Vue change tracking inside Host ERP
-          input.dispatchEvent(new Event('input', { bubbles: true }));
-          input.dispatchEvent(new Event('change', { bubbles: true }));
-        }
-      }
     }
-  };
 
-  window.UnitiveWidget = UnitiveWidget;
-})(window);
+    return () => {
+      if (widgetRef.current) {
+        widgetRef.current.unmount();
+      }
+    };
+  }, [sessionToken]);
+
+  return <div id="unitive-widget-container" ref={containerRef} />;
+};
+```
+
+### B. Angular Integration
+```typescript
+import { Component, OnInit, OnDestroy, Input } from '@angular/core';
+
+declare var UnitiveWidget: any;
+
+@Component({
+  selector: 'app-unitive-widget',
+  template: `<div id="unitive-widget-container"></div>`
+})
+export class UnitiveWidgetComponent implements OnInit, OnDestroy {
+  @Input() sessionToken!: string;
+  private widgetHandle: any;
+
+  ngOnInit() {
+    this.widgetHandle = UnitiveWidget.init({
+      containerId: 'unitive-widget-container',
+      sessionToken: this.sessionToken,
+      backendUrl: 'https://api.unitive.in',
+      theme: 'dark',
+      onComplete: (data: any) => console.log('Angular integration complete', data)
+    });
+  }
+
+  ngOnDestroy() {
+    if (this.widgetHandle) {
+      this.widgetHandle.unmount();
+    }
+  }
+}
+```
+
+### C. Vue Integration
+```html
+<template>
+  <div id="unitive-widget-container"></div>
+</template>
+
+<script>
+export default {
+  props: {
+    sessionToken: { type: String, required: true }
+  },
+  data() {
+    return { widgetHandle: null };
+  },
+  mounted() {
+    this.widgetHandle = window.UnitiveWidget.init({
+      containerId: 'unitive-widget-container',
+      sessionToken: this.sessionToken,
+      backendUrl: 'https://api.unitive.in',
+      onComplete: (data) => this.$emit('complete', data)
+    });
+  },
+  beforeUnmount() {
+    if (this.widgetHandle) {
+      this.widgetHandle.unmount();
+    }
+  }
+};
+</script>
 ```
 
 ---
 
-## 3. Production Backend Integration APIs
+## 4. Content Security Policy (CSP) Recommendations
 
-For server-to-server calls (e.g., custom batch workflows outside the UI), your middleware will interface directly with the FastAPI REST API.
+To mitigate script injection, cross-site scripting (XSS), and clickjacking attacks, load the widget with the following HTTP Security Headers on the parent page hosting the frame:
 
-### A. Document Upload & Ingestion
-Upload invoice files for async virus scanning, OCR, and SLM structural parsing.
+```http
+Content-Security-Policy: 
+  frame-ancestors 'self' https://*.unitive.in https://your-erp-domain.com;
+  script-src 'self' https://cdn.unitive.in;
+  connect-src 'self' https://api.unitive.in;
+  img-src 'self' data: https://cdn.unitive.in;
+```
 
-* **Endpoint**: `POST /api/v1/documents/upload`
-* **Headers**: 
-  * `X-API-Key`: `<Your API key>`
-  * `Content-Type`: `multipart/form-data`
+* **frame-ancestors**: Restricts widget rendering to explicitly verified parent host domains.
+* **script-src / connect-src**: Limits script compilation and network requests to verified API gateways.
+
+---
+
+## 5. Webhook Reliability Architecture
+
+The Unitive backend provides a robust callback framework to notify target systems upon invoice analysis completion.
+
+* **Signature Verification**: Every webhook request includes an `X-Signature` header computed as: `HMAC-SHA256(webhook_secret, payload_bytes)`. Verification must be enforced on your gateway.
+* **Exponential Backoff**: If the target server is down or returns non-2xx codes, the dispatcher retries automatically up to **5 times** over a 24-hour window, delaying calls progressively: `multiplier * (2 ** attempt_number)` seconds.
+* **Dead-Letter Queue (DLQ)**: Failed deliveries after 5 attempts are pushed to a Dead-Letter Queue database collection, reviewable inside the Security Control & Telemetry HUD.
+* **Auto-Disable Switch**: If a workspace's webhook endpoint fails 5 consecutive times, notifications are paused to protect the network, and an administrative lock log is written.
+
+---
+
+## 6. Async Job REST API
+
+For batch server-to-server file integrations, decouple processing state from storage retrieval using the Async Jobs API:
+
+### A. Upload Document to Queue
+* **Endpoint**: `POST /api/v1/documents/jobs/upload`
+* **Headers**: `X-API-Key`: `<Your secret key>`
 * **Response**:
 ```json
 {
-  "id": "doc_a3f890c2-3921-4a3b-9eef-410a5697d2aa",
-  "filename": "invoice_12045.pdf",
-  "mime_type": "application/pdf",
+  "job_id": "job_a3f890c2-3921-4a3b-9eef-410a5697d2aa",
   "status": "pending",
-  "confidence_score": 0.0,
   "created_at": "2026-06-26T11:42:00Z"
 }
 ```
 
-### B. Fetch Extraction Result (Deduplicated Cache Check)
-Fetch the processed structural data. This endpoint queries the **Frequently Downloaded Files cache** (`doc:result:<doc_id>`) instantly avoiding SQL lookups.
-
-* **Endpoint**: `GET /api/v1/documents/{doc_id}`
-* **Headers**: `X-API-Key`: `<Your API key>`
+### B. Poll Job Status
+* **Endpoint**: `GET /api/v1/documents/jobs/{job_id}/status`
 * **Response**:
 ```json
 {
-  "id": "doc_a3f890c2-3921-4a3b-9eef-410a5697d2aa",
-  "filename": "invoice_12045.pdf",
+  "job_id": "job_a3f890c2-3921-4a3b-9eef-410a5697d2aa",
+  "status": "processing",
+  "progress_stage": "ocr" // "pending" | "quarantine" | "ocr" | "extraction" | "completed" | "failed"
+}
+```
+
+### C. Fetch Final Extraction Result
+* **Endpoint**: `GET /api/v1/documents/jobs/{job_id}/result`
+* **Response (If Pending/Processing - 202 Accepted)**:
+```json
+{
+  "job_id": "job_a3f890c2-3921-4a3b-9eef-410a5697d2aa",
+  "status": "processing",
+  "message": "Extraction is still in progress. Please check status again."
+}
+```
+* **Response (If Completed - 200 OK)**:
+```json
+{
+  "job_id": "job_a3f890c2-3921-4a3b-9eef-410a5697d2aa",
   "status": "completed",
   "extracted_json": {
     "vendor_name": "Global Services Ltd",
     "invoice_number": "INV-2026-905",
-    "total_amount": "14,500.00",
-    "mobile_number": "9876543110",
-    "email": "biller@global.com"
+    "total_amount": "14,500.00"
   },
   "confidence_score": 0.95
 }
@@ -194,70 +293,41 @@ Fetch the processed structural data. This endpoint queries the **Frequently Down
 
 ---
 
-## 4. Webhook Registry & Secure HMAC Callbacks
+## 7. Data Protection & Encryption Architecture
 
-To avoid polling client-side, the backend registers a webhook target URL. When parsing finishes, the server issues an HTTP `POST` containing the JSON payload and a custom `X-Signature` validation header.
+* **Transit Protection**: Force TLS 1.3 protocols with secure cipher suites (e.g., `ECDHE-ECDSA-AES128-GCM-SHA256`) for all client-to-server and server-to-server REST traffic.
+* **Storage Protection**: Uploaded assets stored in Object Storage (e.g. AWS S3) are encrypted at rest using envelope encryption with Customer Managed Keys in AWS KMS (SSE-KMS).
+* **Database Encryption**: Sensitive field parameters (like client contact emails, mobile phone details, PAN numbers) are encrypted at the column level in SQL databases using authenticated symmetric cryptography (AES-256-GCM).
+* **Secrets Protection**: API credentials, HMAC signature secrets, and cloud access keys are loaded dynamically from AWS Secrets Manager or HashiCorp Vault. Default config values in `config.py` act as fail-safes and are never checked into version control.
 
-### HMAC Payload Signature Verification (NodeJS / NestJS Example)
-Your ERP webhook gateway should verify payload signatures to prevent Spoofing attacks:
+---
 
-```javascript
-const crypto = require('crypto');
+## 8. Multi-Region Data Residency Routing
 
-function verifyWebhook(req, res, next) {
-  const incomingSignature = req.headers['x-signature'];
-  const webhookSecret = process.env.UNITIVE_WEBHOOK_SECRET; // Loaded from admin settings
+For compliance with data localization directives (e.g. EU GDPR, Indian DPDP Act, Singapore PDPA), Unitive Technologies supports regional storage and processing nodes:
 
-  const computedHash = crypto
-    .createHmac('sha256', webhookSecret)
-    .update(JSON.stringify(req.body))
-    .digest('hex');
-
-  if (computedHash === incomingSignature) {
-    next(); // Safe to process
-  } else {
-    res.status(401).send('Security signature verification failed.');
-  }
-}
+```
+                  [ Global Ingress DNS Route ]
+                               |
+       +-----------------------+-----------------------+
+       |                       |                       |
+[ India Node ]        [ Singapore Node ]        [ Europe Node ]
+ - AP-South-1          - AP-Southeast-1          - EU-Central-1
+ - Local Database      - Local Database          - Local Database
+ - Local Processing     - Local Processing        - Local Processing
 ```
 
----
-
-## 5. Caching Strategy Configuration Matrix
-
-For high availability production readiness, ensure that the cache expiration strategy in [cache_service.py](file:///C:/Users/srira/Desktop/aiproject/aiproject/backend/app/services/cache_service.py) is connected to a clustered Redis server.
-
-| Cache Key Group | TTL Expiration | Invalidation Events | Purpose |
-| :--- | :--- | :--- | :--- |
-| `workspace:<id>:settings` | `10 Minutes` | Configuration Save / Update | Caches Allowed Extensions & settings |
-| `apikey:hash:<hash>` | `10 Minutes` | Key rotation, deletion, revocation | Offloads DB auth queries |
-| `prompt:<name>` | `1 Hour` | Prompt templates file edits | Reuses parsed compiler tokens |
-| `ocr:<file_hash>` | `24 Hours` | Manual reprocessing request | Bypasses OCR text mapping |
-| `ai:result:<hash>` | `30 Days` | Prompt version bump (`v1` to `v2`) | Bypasses LLM cloud API costs |
-| `embedding:hash:<hash>`| `30 Days` | None (fixed sentence model) | Avoids transformer CPU latency |
-| `doc:result:<doc_id>` | `10 Minutes` | Document deletion, human review | Speeds up retrieval/downloads |
-| `ratelimit:requests` | `1 Minute` | Automated clock ticking | Implements rate bucket resets |
+Regional client workloads are mapped automatically to localized processing endpoints, ensuring document files never exit their designated legal jurisdiction.
 
 ---
 
-## 6. Enterprise Production Readiness Checklist
+## 9. Service Level Agreement (SLA) & Recovery Commitments
 
-Before moving the Unitive plugin to staging/production, satisfy this readiness checklist:
+Unitive Technologies guarantees enterprise-grade availability and resilience:
 
-### A. Redis Configuration
-* Install Redis (Cluster mode recommended for multi-region).
-* Verify that the environment variable `REDIS_HOST` and `REDIS_PORT` are configured inside your docker stack.
-* Enable socket timeouts (`socket_timeout=1.0`) to fall back gracefully to the `InMemoryCache` if Redis goes offline.
-
-### B. File Upload Security Policies
-* Retain `max_file_size_mb` limits (20MB) to prevent buffer overflows or denial-of-service (DoS) attacks.
-* Enable ClamAV service inside your Docker orchestration stack (`render.yaml` or `Dockerfile`) to scan uploads during quarantine.
-* Whitelist allowed MIME types (`application/pdf`, `image/png`, `image/jpeg`, `image/tiff`) instead of validating file extensions alone.
-
-### C. Prompt Versioning Policy
-* Keep `prompt_version` tracked in configurations.
-* > [!IMPORTANT]
-  > When changing instructions or adding extraction keys in the prompt template, bump the `prompt_version` settings parameter. This automatically invalidates existing `ai:result` caches so that documents are parsed using the updated model parameters.
-
-### D. CORS Whitelisting
-* Configure allowed origins (`cors_allowed_origins` parameter) to only trust host ERP domains (e.g. `*.yourcompany.com`, `netsuite.oracle.com`) to block unauthorized widget mounts.
+* **Uptime Target**: 99.9% monthly availability for the core API gateway and widget hosting services (excluding planned maintenance).
+* **Response Time Commitments**: API response latency (excluding LLM execution) is guaranteed at **P95 < 500ms**.
+* **Backup Frequency**: Automated database and object storage snapshots are captured **daily** and retained for **30 days** across multiple availability zones.
+* **Disaster Recovery Objectives**:
+  * **RTO (Recovery Time Objective)**: < 4 Hours.
+  * **RPO (Recovery Point Objective)**: < 1 Hour.

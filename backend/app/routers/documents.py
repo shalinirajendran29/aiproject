@@ -1,9 +1,11 @@
 import os
 import shutil
 import hashlib
+from datetime import datetime
 from fastapi import APIRouter, Depends, UploadFile, File, BackgroundTasks, HTTPException
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from ..database import get_db
 from ..config import settings
 from ..models.document import DBModelDocument
@@ -20,6 +22,57 @@ router = APIRouter(prefix="/documents", tags=["documents"])
 ocr_engine = OCREngine()
 slm_engine = SLMEngine()
 
+def finalize_document_processing(doc_id: str, status: str, extracted_json: Optional[Dict[str, Any]], confidence_score: Optional[float], db: Session):
+    """Updates document status, caches the result, updates job stage, and triggers webhook."""
+    doc = db.query(DBModelDocument).filter(DBModelDocument.id == doc_id).first()
+    if not doc:
+        return
+        
+    doc.status = status
+    if extracted_json is not None:
+        doc.extracted_json = extracted_json
+    if confidence_score is not None:
+        doc.confidence_score = float(confidence_score)
+    db.commit()
+
+    # Cache document result for 10 minutes (Point 14)
+    doc_data = {
+        "id": doc.id,
+        "filename": doc.filename,
+        "storage_path": doc.storage_path,
+        "mime_type": doc.mime_type,
+        "status": doc.status,
+        "extracted_json": doc.extracted_json,
+        "corrected_json": doc.corrected_json,
+        "confidence_score": float(doc.confidence_score) if doc.confidence_score is not None else None,
+        "ocr_raw_text": doc.ocr_raw_text,
+        "created_at": doc.created_at.isoformat() if doc.created_at else None
+    }
+    cache_service.set(f"doc:result:{doc.id}", doc_data, expire_seconds=600)
+    
+    # Set job progress stage
+    cache_service.set(f"job:{doc.id}:stage", "completed" if status == "completed" else "failed", expire_seconds=3600)
+
+    # Webhook Reliability (Point 8)
+    from .admin import load_admin_data
+    try:
+        admin_data = load_admin_data()
+        webhook_url = admin_data.get("settings", {}).get("webhook_url")
+        webhook_secret = admin_data.get("settings", {}).get("webhook_secret")
+        if webhook_url:
+            from ..services.webhook_service import dispatch_webhook
+            payload = {
+                "document_id": doc.id,
+                "filename": doc.filename,
+                "status": status,
+                "extracted_json": doc.extracted_json,
+                "confidence_score": float(doc.confidence_score) if doc.confidence_score is not None else 0.0,
+                "timestamp": datetime.utcnow().isoformat() + "Z"
+            }
+            dispatch_webhook(webhook_url, payload, webhook_secret, doc.id)
+    except Exception as wh_err:
+        print(f"Failed to dispatch webhook for doc {doc.id}: {wh_err}")
+
 def process_document_task(doc_id: str, db_session_maker):
     """Background task to run OpenCV + OCR + SLM pipeline."""
     db = db_session_maker()
@@ -32,6 +85,8 @@ def process_document_task(doc_id: str, db_session_maker):
         # Simulate Virus scanning quarantine phase
         from .admin import append_admin_log, load_admin_data
         admin_settings = load_admin_data()["settings"]
+        
+        cache_service.set(f"job:{doc_id}:stage", "quarantine", expire_seconds=3600)
         
         if admin_settings.get("virus_scanning_enabled", True):
             append_admin_log("security", "INFO", f"ClamAV: Starting quarantine virus scan on '{doc.filename}'...")
@@ -62,6 +117,7 @@ def process_document_task(doc_id: str, db_session_maker):
         is_csv = ext == ".csv"
         
         if is_excel or is_csv:
+            cache_service.set(f"job:{doc_id}:stage", "extraction", expire_seconds=3600)
             import pandas as pd
             
             def clean_excel_key(raw_key: str) -> str:
@@ -148,10 +204,7 @@ def process_document_task(doc_id: str, db_session_maker):
                     rec[key] = str(val) if val is not None else ""
                 records.append(post_process_record(rec))
                 
-            doc.extracted_json = {"records": records}
-            doc.confidence_score = 1.0
-            doc.status = "completed"
-            db.commit()
+            finalize_document_processing(doc_id, "completed", {"records": records}, 1.0, db)
             return
 
         # 1b. Handle Word Ingestion (.docx)
@@ -159,6 +212,7 @@ def process_document_task(doc_id: str, db_session_maker):
         if is_word:
             if ext == ".doc":
                 raise ValueError("Legacy Word (.doc) format is not supported. Please save/convert the document to modern Word (.docx) format.")
+            cache_service.set(f"job:{doc_id}:stage", "ocr", expire_seconds=3600)
             import docx
             try:
                 doc_obj = docx.Document(raw_path)
@@ -177,17 +231,15 @@ def process_document_task(doc_id: str, db_session_maker):
             doc.ocr_raw_text = full_text
             db.commit()
             
+            cache_service.set(f"job:{doc_id}:stage", "extraction", expire_seconds=3600)
             extracted_data = slm_engine.extract_fields(ocr_res)
-            doc.extracted_json = extracted_data
             
+            conf = 0.0
             if extracted_data:
                 non_null_count = sum(1 for v in extracted_data.values() if v is not None)
-                doc.confidence_score = non_null_count / len(extracted_data) if len(extracted_data) > 0 else 0.0
-            else:
-                doc.confidence_score = 0.0
+                conf = non_null_count / len(extracted_data) if len(extracted_data) > 0 else 0.0
                 
-            doc.status = "completed"
-            db.commit()
+            finalize_document_processing(doc_id, "completed", extracted_data, conf, db)
             return
 
         # 1c. Handle PDF Ingestion
@@ -201,6 +253,7 @@ def process_document_task(doc_id: str, db_session_maker):
                     ocr_cache_key = f"ocr:{file_hash}" if file_hash else None
                     cached_ocr_res = cache_service.get(ocr_cache_key) if ocr_cache_key else None
                     
+                    cache_service.set(f"job:{doc_id}:stage", "ocr", expire_seconds=3600)
                     if cached_ocr_res:
                         ocr_res = cached_ocr_res
                         append_admin_log("deduplication", "INFO", f"OCR Cache Hit for single-page PDF '{doc.filename}'. Restoring cached OCR data.")
@@ -221,16 +274,18 @@ def process_document_task(doc_id: str, db_session_maker):
                     doc.ocr_raw_text = ocr_res["raw_text"]
                     db.commit()
                     
+                    cache_service.set(f"job:{doc_id}:stage", "extraction", expire_seconds=3600)
                     extracted_data = slm_engine.extract_fields(ocr_res, file_hash=file_hash)
-                    doc.extracted_json = extracted_data
                     
                     non_null_count = sum(1 for v in extracted_data.values() if v is not None)
-                    doc.confidence_score = non_null_count / len(extracted_data) if len(extracted_data) > 0 else 0.0
+                    conf = non_null_count / len(extracted_data) if len(extracted_data) > 0 else 0.0
+                    finalize_document_processing(doc_id, "completed", extracted_data, conf, db)
                 else:
                     # Multi-page PDF: process each page as a separate record
                     records = []
                     all_raw_text = []
                     for idx in range(len(pdf)):
+                        cache_service.set(f"job:{doc_id}:stage", "ocr", expire_seconds=3600)
                         # Look up page-level OCR cache
                         page_cache_key = f"ocr:{file_hash}_page_{idx+1}" if file_hash else None
                         cached_page_ocr = cache_service.get(page_cache_key) if page_cache_key else None
@@ -255,6 +310,7 @@ def process_document_task(doc_id: str, db_session_maker):
                                 
                         all_raw_text.append(f"--- PAGE {idx+1} ---\n{ocr_res['raw_text']}")
                         
+                        cache_service.set(f"job:{doc_id}:stage", "extraction", expire_seconds=3600)
                         extracted_page_data = slm_engine.extract_fields(
                             ocr_res, 
                             file_hash=f"{file_hash}_page_{idx+1}" if file_hash else None
@@ -265,18 +321,16 @@ def process_document_task(doc_id: str, db_session_maker):
                             records.append(extracted_page_data)
                             
                     doc.ocr_raw_text = "\n\n".join(all_raw_text)
-                    extracted_data = {"records": records}
-                    doc.extracted_json = extracted_data
+                    db.commit()
                     
+                    extracted_data = {"records": records}
+                    
+                    conf = 0.0
                     if records:
                         first_rec = records[0]
                         non_null_count = sum(1 for v in first_rec.values() if v is not None)
-                        doc.confidence_score = non_null_count / len(first_rec) if len(first_rec) > 0 else 1.0
-                    else:
-                        doc.confidence_score = 0.0
-                
-                doc.status = "completed"
-                db.commit()
+                        conf = non_null_count / len(first_rec) if len(first_rec) > 0 else 1.0
+                    finalize_document_processing(doc_id, "completed", extracted_data, conf, db)
                 return
             else:
                 raise ValueError("PDF file is empty")
@@ -285,6 +339,7 @@ def process_document_task(doc_id: str, db_session_maker):
             ocr_cache_key = f"ocr:{file_hash}" if file_hash else None
             cached_ocr_res = cache_service.get(ocr_cache_key) if ocr_cache_key else None
             
+            cache_service.set(f"job:{doc_id}:stage", "ocr", expire_seconds=3600)
             if cached_ocr_res:
                 ocr_res = cached_ocr_res
                 append_admin_log("deduplication", "INFO", f"OCR Cache Hit for image '{doc.filename}'. Restoring cached OCR data.")
@@ -308,27 +363,24 @@ def process_document_task(doc_id: str, db_session_maker):
         db.commit()
         
         # 4. SLM Structured Extraction
+        cache_service.set(f"job:{doc_id}:stage", "extraction", expire_seconds=3600)
         extracted_data = slm_engine.extract_fields(ocr_res, file_hash=file_hash)
-        doc.extracted_json = extracted_data
         
         # Calculate confidence score
+        conf = 0.0
         if "records" in extracted_data and isinstance(extracted_data["records"], list) and len(extracted_data["records"]) > 0:
             first_rec = extracted_data["records"][0]
             non_null_count = sum(1 for v in first_rec.values() if v is not None)
-            doc.confidence_score = non_null_count / len(first_rec) if len(first_rec) > 0 else 1.0
+            conf = non_null_count / len(first_rec) if len(first_rec) > 0 else 1.0
         else:
             non_null_count = sum(1 for v in extracted_data.values() if v is not None)
-            doc.confidence_score = non_null_count / len(extracted_data) if len(extracted_data) > 0 else 0.0
+            conf = non_null_count / len(extracted_data) if len(extracted_data) > 0 else 0.0
         
-        doc.status = "completed"
-        db.commit()
+        finalize_document_processing(doc_id, "completed", extracted_data, conf, db)
         
     except Exception as e:
         print(f"Background task failed for document {doc_id}: {e}")
-        doc = db.query(DBModelDocument).filter(DBModelDocument.id == doc_id).first()
-        if doc:
-            doc.status = "failed"
-            db.commit()
+        finalize_document_processing(doc_id, "failed", None, 0.0, db)
     finally:
         db.close()
 
@@ -413,6 +465,9 @@ def upload_document(
     if file_hash:
         cache_service.set(dup_cache_key, db_doc.id, expire_seconds=30 * 24 * 3600)
     
+    # Initialize Job progress stage in cache
+    cache_service.set(f"job:{db_doc.id}:stage", "pending", expire_seconds=3600)
+
     # 5. Live logging and virus scan scheduling
     append_admin_log("security", "INFO", f"Ingested '{filename}'. Scheduling ClamAV quarantine virus scan...")
 
@@ -421,6 +476,68 @@ def upload_document(
     background_tasks.add_task(process_document_task, db_doc.id, SessionLocal)
     
     return db_doc
+
+
+# --- Async Job API endpoints (Point 9) ---
+
+@router.post("/jobs/upload")
+def upload_document_job(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    """
+    Asynchronously uploads file, returns job ID immediately, and runs parsing in the background.
+    """
+    # Simply reuse upload logic, but return a lighter job response payload
+    doc = upload_document(background_tasks, file, db)
+    return {
+        "job_id": doc.id,
+        "status": doc.status,
+        "created_at": doc.created_at.isoformat() if doc.created_at else datetime.utcnow().isoformat() + "Z"
+    }
+
+@router.get("/jobs/{job_id}/status")
+def get_job_status(job_id: str, db: Session = Depends(get_db)):
+    """
+    Retrieves the status and specific progress stage of an extraction job.
+    """
+    doc = db.query(DBModelDocument).filter(DBModelDocument.id == job_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    progress_stage = cache_service.get(f"job:{job_id}:stage") or doc.status
+    return {
+        "job_id": job_id,
+        "status": doc.status,
+        "progress_stage": progress_stage
+    }
+
+@router.get("/jobs/{job_id}/result")
+def get_job_result(job_id: str, db: Session = Depends(get_db)):
+    """
+    Retrieves the parsed/extracted JSON output for completed jobs.
+    """
+    doc = db.query(DBModelDocument).filter(DBModelDocument.id == job_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    if doc.status in ["pending", "processing"]:
+        return JSONResponse(
+            status_code=202,
+            content={
+                "job_id": job_id,
+                "status": doc.status,
+                "message": "Extraction is still in progress. Please check status again."
+            }
+        )
+        
+    return {
+        "job_id": job_id,
+        "status": doc.status,
+        "extracted_json": doc.extracted_json,
+        "confidence_score": doc.confidence_score
+    }
 
 
 @router.get("", response_model=List[DocumentResponse])

@@ -32,7 +32,13 @@ DEFAULT_SETTINGS = {
   "webhook_url": "https://unitive.in/callbacks/invoices",
   "prompt_injection_protection": True,
   "duplicate_detection_sha256": True,
-  "cors_allowed_origins": ["dashboard.unitive.in", "unitive.in"]
+  "cors_allowed_origins": ["dashboard.unitive.in", "unitive.in"],
+  "prompt_version": "v1",
+  "feature_flags_ocr": True,
+  "feature_flags_ai": True,
+  "feature_flags_autofill": True,
+  "feature_flags_audit": True,
+  "feature_flags_virus_scan": True
 }
 
 # Seed logs
@@ -144,6 +150,12 @@ class SettingsUpdateRequest(BaseModel):
     webhook_url: Optional[str] = None
     prompt_injection_protection: Optional[bool] = None
     duplicate_detection_sha256: Optional[bool] = None
+    prompt_version: Optional[str] = None
+    feature_flags_ocr: Optional[bool] = None
+    feature_flags_ai: Optional[bool] = None
+    feature_flags_autofill: Optional[bool] = None
+    feature_flags_audit: Optional[bool] = None
+    feature_flags_virus_scan: Optional[bool] = None
 
 @router.get("/settings")
 def get_settings():
@@ -490,3 +502,80 @@ def update_user_session(session_data: SessionData, session_id: str = "current_se
     cache_service.set(cache_key, data, expire_seconds=1800)
     append_admin_log("session", "INFO", f"User session updated and cached for '{session_data.username}'.")
     return data
+
+# --- SDK Session Token Generator Endpoint (Points 1 and 4) ---
+class SessionTokenCreateRequest(BaseModel):
+    api_key: str
+    allowed_origin: str
+
+@router.post("/session/create")
+def create_embed_session_token(req: SessionTokenCreateRequest, db: Session = Depends(get_db)):
+    raw_key = req.api_key
+    if raw_key.lower().startswith("bearer "):
+        raw_key = raw_key[7:]
+    
+    import hashlib
+    key_hash = hashlib.sha256(raw_key.strip().encode()).hexdigest()
+    
+    # Check if key is active
+    data = load_admin_data()
+    matched_key = None
+    for k in data.get("keys", []):
+        if k.get("hashed_key") == key_hash and k.get("status") == "active":
+            matched_key = k
+            break
+            
+    if not matched_key:
+        raise HTTPException(status_code=401, detail="Invalid API Key credentials")
+        
+    # Generate signed session token mapping metadata to Redis
+    import secrets
+    from datetime import datetime, timedelta
+    session_token = "uni_sess_" + secrets.token_hex(24)
+    expiry = datetime.utcnow() + timedelta(minutes=15)
+    
+    permissions_list = ["read"]
+    if matched_key.get("role") in ["Admin", "Developer"]:
+        permissions_list.extend(["write", "delete"])
+    if matched_key.get("role") == "Admin":
+        permissions_list.append("admin")
+        
+    session_payload = {
+        "workspace": matched_key.get("workspace"),
+        "workspace_id": "ws_" + matched_key.get("workspace").lower().replace(" ", "_"),
+        "role": matched_key.get("role"),
+        "permissions": permissions_list,
+        "allowed_origin": req.allowed_origin,
+        "expires_at": expiry.isoformat() + "Z"
+    }
+    
+    # Save token mapping with 15 minutes TTL
+    cache_service.set(f"session:token:{session_token}", session_payload, expire_seconds=900)
+    
+    return {
+        "session_token": session_token,
+        "expires_in_sec": 900,
+        "allowed_origin": req.allowed_origin,
+        "permissions": permissions_list
+    }
+
+# --- SDK Version Negotiation Endpoint (Point 2) ---
+class NegotiationRequest(BaseModel):
+    sdk_version: str
+
+@router.post("/sdk/negotiate")
+def negotiate_sdk_version(req: NegotiationRequest):
+    supported_versions = ["v1", "v2"]
+    if req.sdk_version in supported_versions:
+        return {
+            "status": "compatible",
+            "selected_version": req.sdk_version,
+            "supported_versions": supported_versions
+        }
+    else:
+        raise HTTPException(status_code=400, detail=f"Unsupported SDK Version: {req.sdk_version}. Compatible protocols: {', '.join(supported_versions)}")
+
+@router.get("/ping")
+def ping_check():
+    return {"status": "PONG", "timestamp": datetime.utcnow().isoformat() + "Z"}
+

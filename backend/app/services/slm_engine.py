@@ -68,6 +68,13 @@ class SLMEngine:
             table_data = self._extract_table_records(words, ocr_text)
             if table_data and "records" in table_data and len(table_data["records"]) > 0:
                 print(f"Table ingestion active: Extracted {len(table_data['records'])} rows.")
+                # Attach pipeline version metadata (Requirement 11)
+                table_data["_pipeline_metadata"] = {
+                    "ocr_engine_version": "EasyOCR v3.1" if admin_settings.get("feature_flags_ocr", True) else "OCR Disabled",
+                    "prompt_version": f"Prompt {prompt_version}",
+                    "model_version": "Heuristic Table Parser",
+                    "pipeline_version": "Pipeline v2"
+                }
                 # Cache table heuristic result for 30 days
                 cache_service.set(ai_cache_key, table_data, expire_seconds=30 * 86400)
                 return table_data
@@ -140,6 +147,17 @@ class SLMEngine:
                 
         if not result_data:
             result_data = self._post_process_data(self._regex_fallback_extract(ocr_text), ocr_text)
+
+        # Attach pipeline version metadata (Requirement 11)
+        if isinstance(result_data, dict) and len(result_data) > 0:
+            model_name_used = "gemini-2.5-flash" if getattr(self, "gemini_api_key", None) else self.model
+            if "_pipeline_metadata" not in result_data:
+                result_data["_pipeline_metadata"] = {
+                    "ocr_engine_version": "EasyOCR v3.1" if admin_settings.get("feature_flags_ocr", True) else "OCR Disabled",
+                    "prompt_version": f"Prompt {prompt_version}",
+                    "model_version": model_name_used,
+                    "pipeline_version": "Pipeline v2"
+                }
 
         # Cache the successfully post-processed data (30 days TTL) (Point 5)
         cache_service.set(ai_cache_key, result_data, expire_seconds=30 * 86400)

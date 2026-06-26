@@ -36,10 +36,15 @@ IP_REQUESTS = defaultdict(list)
 
 @app.middleware("http")
 async def rate_limiting_middleware(request: Request, call_next):
-    # Only rate limit API requests
+    # Check/Generate Correlation ID for Distributed Tracing (Point 10)
+    import uuid
+    correlation_id = request.headers.get("X-Correlation-ID") or f"corr_{uuid.uuid4().hex[:12]}"
+    request.state.correlation_id = correlation_id
+
+    # Only rate limit & auth API requests
     if request.url.path.startswith(settings.API_V1_STR):
-        # Exclude admin routes from auth checks to prevent lockout loops
-        if "/admin/" not in request.url.path:
+        # Exclude admin and auth session routes from auth checks to prevent lockout loops
+        if "/admin/" not in request.url.path and "/session/create" not in request.url.path:
             # 1. Resolve API Key & RBAC Info
             api_key_header = request.headers.get("X-API-Key") or request.headers.get("Authorization")
             workspace_name = "Default Workspace"
@@ -48,80 +53,105 @@ async def rate_limiting_middleware(request: Request, call_next):
             permissions_role = "Read Only"
             plan_name = "Free Tier"
             
-            # API Key authentication
+            # API Key / Embed Token authentication (Points 1, 4, 5)
             if api_key_header:
                 raw_key = api_key_header
                 if raw_key.lower().startswith("bearer "):
                     raw_key = raw_key[7:]
                 
-                import hashlib
-                key_hash = hashlib.sha256(raw_key.strip().encode()).hexdigest()
-                
-                try:
-                    cache_key = f"apikey:hash:{key_hash}"
-                    cached_key_info = cache_service.get(cache_key)
-                    
-                    if cached_key_info:
-                        if cached_key_info.get("status") == "active":
-                            workspace_name = cached_key_info.get("workspace")
-                            permissions_role = cached_key_info.get("role")
-                            api_key_prefix = cached_key_info.get("prefix")
-                            user_name = cached_key_info.get("name")
-                            plan_name = cached_key_info.get("plan")
-                        else:
+                # Check if it's a short-lived Bearer Embed Token (Point 1 & 4)
+                if raw_key.startswith("uni_sess_"):
+                    session_key = f"session:token:{raw_key}"
+                    session_payload = cache_service.get(session_key)
+                    if session_payload:
+                        # Origin Validation (Point 5)
+                        client_origin = request.headers.get("Origin") or request.headers.get("Referer")
+                        expected_origin = session_payload.get("allowed_origin")
+                        
+                        # Match origin hostname constraints
+                        if expected_origin and client_origin and expected_origin not in client_origin:
+                            append_admin_log("auth", "WARNING", f"[{correlation_id}] Embed Token Origin Mismatch: Expected '{expected_origin}', Got '{client_origin}'")
                             return JSONResponse(
-                                status_code=401,
-                                content={"detail": "Unauthorized. Invalid or revoked API Key."},
+                                status_code=403,
+                                content={"detail": "Forbidden. Parent origin validation failed."},
                             )
+                        
+                        workspace_name = session_payload.get("workspace")
+                        permissions_role = session_payload.get("role")
+                        api_key_prefix = "session_token"
+                        user_name = "Embedded Session User"
+                        plan_name = "Enterprise Plan" if permissions_role == "Admin" else "Standard Plan"
                     else:
-                        data = load_admin_data()
-                        matched_key = None
-                        for k in data.get("keys", []):
-                            if k.get("hashed_key") == key_hash and k.get("status") == "active":
-                                matched_key = k
-                                break
-                        if matched_key:
-                            workspace_name = matched_key.get("workspace", "Default Workspace")
-                            permissions_role = matched_key.get("role", "Developer")
-                            api_key_prefix = matched_key.get("prefix", "uni_live...")
-                            user_name = matched_key.get("name", "Operator")
-                            plan_name = "Enterprise Plan" if permissions_role == "Admin" else "Standard Plan"
-                            
-                            # Build permissions list (Point 2)
-                            permissions_list = ["read"]
-                            if permissions_role in ["Admin", "Developer"]:
-                                permissions_list.extend(["write", "delete"])
-                            if permissions_role == "Admin":
-                                permissions_list.append("admin")
-                                
-                            # Fetch rate limit setting to store in key cache (Point 2)
-                            admin_settings = data.get("settings", {})
-                            key_limit = admin_settings.get("rate_limit_api_key", 100)
-                            
-                            # Cache the successful key validation with 10 min TTL (Point 2)
-                            key_info = {
-                                "status": "active",
-                                "hash": key_hash,
-                                "workspace": workspace_name,
-                                "workspace_id": "ws_" + workspace_name.lower().replace(" ", "_"),
-                                "role": permissions_role,
-                                "prefix": api_key_prefix,
-                                "name": user_name,
-                                "plan": plan_name,
-                                "permissions": permissions_list,
-                                "rate_limit_bucket": key_limit
-                            }
-                            cache_service.set(cache_key, key_info, expire_seconds=600)
+                        return JSONResponse(
+                            status_code=401,
+                            content={"detail": "Unauthorized. Embed session token has expired or is invalid."},
+                        )
+                else:
+                    # Regular API Key lookup
+                    import hashlib
+                    key_hash = hashlib.sha256(raw_key.strip().encode()).hexdigest()
+                    
+                    try:
+                        cache_key = f"apikey:hash:{key_hash}"
+                        cached_key_info = cache_service.get(cache_key)
+                        
+                        if cached_key_info:
+                            if cached_key_info.get("status") == "active":
+                                workspace_name = cached_key_info.get("workspace")
+                                permissions_role = cached_key_info.get("role")
+                                api_key_prefix = cached_key_info.get("prefix")
+                                user_name = cached_key_info.get("name")
+                                plan_name = cached_key_info.get("plan")
+                            else:
+                                return JSONResponse(
+                                    status_code=401,
+                                    content={"detail": "Unauthorized. Invalid or revoked API Key."},
+                                )
                         else:
-                            # Cache negative validation (5 min TTL) to avoid DB flood
-                            cache_service.set(cache_key, {"status": "revoked"}, expire_seconds=300)
-                            append_admin_log("auth", "WARNING", f"Access Denied: Invalid or revoked API Key supplied to '{request.url.path}'.")
-                            return JSONResponse(
-                                status_code=401,
-                                content={"detail": "Unauthorized. Invalid or revoked API Key."},
-                            )
-                except Exception as e:
-                    print(f"Failed to lookup API key: {e}")
+                            data = load_admin_data()
+                            matched_key = None
+                            for k in data.get("keys", []):
+                                if k.get("hashed_key") == key_hash and k.get("status") == "active":
+                                    matched_key = k
+                                    break
+                            if matched_key:
+                                workspace_name = matched_key.get("workspace", "Default Workspace")
+                                permissions_role = matched_key.get("role", "Developer")
+                                api_key_prefix = matched_key.get("prefix", "uni_live...")
+                                user_name = matched_key.get("name", "Operator")
+                                plan_name = "Enterprise Plan" if permissions_role == "Admin" else "Standard Plan"
+                                
+                                permissions_list = ["read"]
+                                if permissions_role in ["Admin", "Developer"]:
+                                    permissions_list.extend(["write", "delete"])
+                                if permissions_role == "Admin":
+                                    permissions_list.append("admin")
+                                    
+                                admin_settings = data.get("settings", {})
+                                key_limit = admin_settings.get("rate_limit_api_key", 100)
+                                
+                                key_info = {
+                                    "status": "active",
+                                    "hash": key_hash,
+                                    "workspace": workspace_name,
+                                    "workspace_id": "ws_" + workspace_name.lower().replace(" ", "_"),
+                                    "role": permissions_role,
+                                    "prefix": api_key_prefix,
+                                    "name": user_name,
+                                    "plan": plan_name,
+                                    "permissions": permissions_list,
+                                    "rate_limit_bucket": key_limit
+                                }
+                                cache_service.set(cache_key, key_info, expire_seconds=600)
+                            else:
+                                cache_service.set(cache_key, {"status": "revoked"}, expire_seconds=300)
+                                append_admin_log("auth", "WARNING", f"[{correlation_id}] Access Denied: Invalid API Key supplied to '{request.url.path}'.")
+                                return JSONResponse(
+                                    status_code=401,
+                                    content={"detail": "Unauthorized. Invalid or revoked API Key."},
+                                )
+                    except Exception as e:
+                        print(f"Failed to lookup API key: {e}")
             
             # 2. Layered Rate Limiter: Per-IP or Per-API-Key (Point 12)
             try:
@@ -136,33 +166,39 @@ async def rate_limiting_middleware(request: Request, call_next):
             
             # Layered Rate Limit Enforcement
             if api_key_header and api_key_prefix != "Unauthenticated":
-                # Limit per API Key (Point 12)
                 key_cache_limit_key = f"apikey:requests:minute:{api_key_prefix}"
                 current_requests = cache_service.incr_rate_limit(key_cache_limit_key, window_seconds=60)
                 if current_requests > key_limit:
-                    append_admin_log("ratelimit", "WARNING", f"Rate limit 429 triggered for API Key '{api_key_prefix}' (Limit: {key_limit} req/min). User: '{user_name}', Workspace: '{workspace_name}'")
+                    append_admin_log("ratelimit", "WARNING", f"[{correlation_id}] Rate limit 429 triggered for API Key '{api_key_prefix}' (Limit: {key_limit} req/min). User: '{user_name}'")
                     return JSONResponse(
                         status_code=429,
-                        content={"detail": "Too Many Requests. API Key rate limit exceeded. Please retry later."},
-                        headers={"Retry-After": "18"}
+                        content={"detail": "Too Many Requests. Rate limit exceeded. Retry later."},
+                        headers={"Retry-After": "18", "X-Correlation-ID": correlation_id}
                     )
             else:
-                # Limit per IP (Point 12)
                 ip_cache_limit_key = f"ip:requests:minute:{client_ip}"
                 current_requests = cache_service.incr_rate_limit(ip_cache_limit_key, window_seconds=60)
                 if current_requests > ip_limit:
-                    append_admin_log("ratelimit", "WARNING", f"Rate limit 429 triggered for IP '{client_ip}' (Limit: {ip_limit} req/min).")
+                    append_admin_log("ratelimit", "WARNING", f"[{correlation_id}] Rate limit 429 triggered for IP '{client_ip}' (Limit: {ip_limit} req/min).")
                     return JSONResponse(
                         status_code=429,
-                        content={"detail": "Too Many Requests. IP rate limit exceeded. Please retry later."},
-                        headers={"Retry-After": "18"}
+                        content={"detail": "Too Many Requests. IP rate limit exceeded. Retry later."},
+                        headers={"Retry-After": "18", "X-Correlation-ID": correlation_id}
                     )
                 
-            # Log write/delete requests in administrative audit logs
             if request.method in ["POST", "DELETE"]:
-                append_admin_log("audit", "INFO", f"Audit: Request {request.method} {request.url.path} from User '{user_name}' ({permissions_role}) of Workspace '{workspace_name}' on Plan '{plan_name}'.")
+                try:
+                    admin_settings = load_admin_data().get("settings", {})
+                    audit_enabled = admin_settings.get("feature_flags_audit", True)
+                except Exception:
+                    audit_enabled = True
+                if audit_enabled:
+                    append_admin_log("audit", "INFO", f"[{correlation_id}] Audit: Request {request.method} {request.url.path} from User '{user_name}' ({permissions_role}) in workspace '{workspace_name}'.")
+
 
     response = await call_next(request)
+    # Inject Correlation ID into Response Headers for Distributed Tracing (Point 10)
+    response.headers["X-Correlation-ID"] = correlation_id
     return response
 
 # Route registrations
