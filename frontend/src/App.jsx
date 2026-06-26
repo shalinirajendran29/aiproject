@@ -121,6 +121,8 @@ export default function App() {
   // Plugins & Layout states
   const [layout, setLayout] = useState('command'); // 'command' (3col), 'split' (2col), 'focus' (tabbed)
   const [focusTab, setFocusTab] = useState('verification'); // active tab in focus mode
+  const [activePage, setActivePage] = useState('dashboard');
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [activePlugins, setActivePlugins] = useState({
     ingestor: true,
     feed: true,
@@ -2585,9 +2587,10 @@ export default function App() {
   };
 
   return (
-    <div className="smartfill-plugin-root min-h-screen p-4 text-slate-700">
+    <div className="smartfill-plugin-root min-h-screen text-slate-700">
+      {/* Offline Banner */}
       {!backendOnline && (
-        <div className="bg-red-50 text-red-700 border border-red-200 rounded-md p-3 mb-4 flex items-center justify-between shadow-sm">
+        <div className="bg-red-50 text-red-700 border border-red-200 p-3 flex items-center justify-between shadow-sm" style={{ position: 'fixed', top: 0, left: 0, right: 0, zIndex: 100 }}>
           <div className="flex items-center gap-2">
             <AlertCircle className="w-4 h-4 text-red-500 animate-pulse" />
             <span className="font-semibold text-xs">Unitive Technologies host connection lost. Attempting to reconnect...</span>
@@ -2599,277 +2602,886 @@ export default function App() {
           )}
         </div>
       )}
-      <div className="unitive-workspace-wrapper">
-        {/* Brand Header */}
-      <header className="glass-panel flex flex-col md:flex-row justify-between items-center gap-4 mb-4" style={{ padding: '12px 20px', borderLeft: '4px solid var(--accent-color)' }}>
-        <div className="flex items-center gap-4">
-          {/* Unitive Official Logo Image */}
-          <div className="flex items-center justify-center bg-white p-1 rounded border border-slate-200 shadow-sm" style={{ flexShrink: 0 }}>
+
+      {/* Main ERP Layout container */}
+      <div className="erp-layout" style={{ paddingTop: !backendOnline ? '48px' : '0' }}>
+        
+        {/* Left Sidebar */}
+        <aside className={`erp-sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
+          
+          {/* Logo Header */}
+          <div className="erp-sidebar-logo">
             <img 
               src="https://unitive.in/assets/images/logo/9.png" 
-              alt="Unitive Technologies Logo" 
-              className="h-10 object-contain"
+              alt="Unitive Technologies Logo"
               onError={(e) => {
-                // fallback hide if network error
                 e.target.style.display = 'none';
               }}
             />
-          </div>
-          
-          {/* Title & Tagline */}
-          <div className="flex flex-col">
-            <div className="flex items-center gap-2">
-              <h1 className="text-lg font-bold text-slate-800 tracking-wide m-0" style={{ fontFamily: "'Poppins', sans-serif" }}>
-                Unitive Form Automation
-              </h1>
-              <span className="text-[9px] font-mono font-bold bg-orange-500/10 text-orange-600 px-2 py-0.5 rounded border border-orange-500/20 uppercase tracking-wider">
-                PROJECT KEYSTONE (v0.1.0-alpha.3)
-              </span>
-            </div>
-            <span className="text-[10px] text-slate-500 font-medium mt-0.5">
-              Intelligent Form Fill and Document Verification Platform
-            </span>
-          </div>
-        </div>
-
-        {/* Navigation Switch Board & Session Status */}
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1 bg-slate-100 border border-slate-200 p-0.5 rounded-lg">
-            <button
-              onClick={() => {
-                setLayout('command');
-                addLog('Switched view to Operations Deck.', 'sys');
-              }}
-              className={`px-3 py-1.5 font-mono text-[9px] font-bold rounded transition-all ${
-                layout !== 'admin'
-                  ? 'bg-slate-900 text-white shadow-sm'
-                  : 'text-slate-500 hover:text-slate-700'
-              }`}
-            >
-              OPERATIONS DECK
-            </button>
-            <button
-              onClick={() => {
-                setLayout('admin');
-                addLog('Switched view to Security & Telemetry Control Screen.', 'sys');
-              }}
-              className={`px-3 py-1.5 font-mono text-[9px] font-bold rounded transition-all ${
-                layout === 'admin'
-                  ? 'bg-orange-600 text-white shadow-sm'
-                  : 'text-slate-500 hover:text-slate-700'
-              }`}
-            >
-              SECURITY CONTROL
-            </button>
-          </div>
-
-          <div className="flex items-center gap-1.5 text-xs text-emerald-600 font-mono bg-emerald-500/5 px-3 py-1.5 rounded border border-emerald-500/10">
-            <span className="led led-green led-pulse" style={{ width: '6px', height: '6px' }}></span>
-            <span>SECURE SYSTEM LINK ESTABLISHED</span>
-          </div>
-        </div>
-      </header>
-
-      {/* Top Telemetry HUD Bar */}
-      <header className="telemetry-bar">
-        <div className="telemetry-item" style={{ borderRight: '1px solid var(--border-color)' }}>
-          <span className="telemetry-label">SYSTEM CORE</span>
-          <div className="telemetry-value">
-            <span className={`led led-green led-pulse`}></span>
-            <span>UNITIVE_AI // ACTIVE</span>
-          </div>
-        </div>
-        
-        <div className="telemetry-item" style={{ borderRight: '1px solid var(--border-color)' }}>
-          <span className="telemetry-label">EXTRACTION ENGINE</span>
-          <div className="telemetry-value text-indigo-400">
-            <span className="led led-blue"></span>
-            <span>{slmInfo.model}</span>
-          </div>
-        </div>
-
-        <div className="telemetry-item" style={{ borderRight: '1px solid var(--border-color)' }}>
-          <span className="telemetry-label">HOST SERVICE ping</span>
-          <div className="telemetry-value text-emerald-400 font-mono">
-            {backendOnline ? (
-              <>
-                <span>{latency}ms</span>
-                <span className="text-[9px] text-slate-600">PORT_8000</span>
-              </>
-            ) : (
-              <span className="text-red-500 font-bold uppercase">OFFLINE</span>
-            )}
-          </div>
-        </div>
-
-        <div className="telemetry-item" style={{ borderRight: '1px solid var(--border-color)' }}>
-          <span className="telemetry-label">DATABASE FEED</span>
-          <div className="telemetry-value font-mono">
-            <Database className="w-3.5 h-3.5 text-slate-500" />
-            <span>{documentsList.length} FILE BUFFERS</span>
-          </div>
-        </div>
-
-        <div className="telemetry-item">
-          <span className="telemetry-label">OP SESSION STATE</span>
-          <div className="telemetry-value text-slate-400 font-mono text-[11px]">
-            <span>SECURE_OP_902</span>
-          </div>
-        </div>
-      </header>
-
-      {/* Plugin Command Switch Board */}
-      <section className="plugin-deck">
-        <div className="flex flex-col gap-1">
-          <span className="queue-title" style={{ fontSize: '10px' }}>Dashboard Plugin Control Deck</span>
-          <div className="plugin-toggles mt-1">
-            {[
-              { key: 'ingestor', label: 'Ingest_Core' },
-              { key: 'feed', label: 'Repository_Feed' },
-              { key: 'verification', label: 'Verification_Studio' },
-              { key: 'mapper', label: 'Portal_DOM_Mapper' },
-              { key: 'logs', label: 'Live_Engine_Console' },
-              { key: 'admin', label: 'Admin_Console' }
-            ].map((p) => (
-              <button
-                key={p.key}
-                onClick={() => togglePlugin(p.key)}
-                className={`plugin-toggle-btn ${activePlugins[p.key] ? 'active' : ''}`}
-              >
-                <div className={`led ${activePlugins[p.key] ? 'led-blue' : 'bg-slate-700'}`} style={{ width: '6px', height: '6px' }}></div>
-                <span>{p.label}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="layout-selector mt-2 md:mt-0">
-          <Layout className="w-3.5 h-3.5 text-slate-500" />
-          <span className="text-[10px] uppercase font-mono text-slate-500">ARCHITECTURE</span>
-          <select 
-            value={layout} 
-            onChange={(e) => {
-              setLayout(e.target.value);
-              addLog(`Layout architecture rearranged to: ${e.target.value.toUpperCase()}`, 'sys');
-            }} 
-            className="layout-select"
-          >
-            <option value="command">Command Console (3-Col)</option>
-            <option value="split">Split Workspace (2-Col)</option>
-            <option value="focus">Focus Frame (Tabbed)</option>
-            <option value="admin">Enterprise Control (FullScreen)</option>
-          </select>
-        </div>
-      </section>
-
-      {/* Responsive Grid Layout Renderer */}
-      <main>
-        {/* LAYOUT 1: COMMAND CONSOLE (3 COLUMNS) */}
-        {layout === 'command' && (
-          <div className="layout-grid-3cols" style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '20px' }}>
-            {/* Column 1: Left */}
-            <div className="flex flex-col gap-4">
-              {renderIngestorPlugin()}
-              {renderFeedPlugin()}
-            </div>
-            
-            {/* Column 2: Middle */}
-            <div className="flex flex-col gap-4">
-              {renderVerificationPlugin()}
-              {renderAdminPlugin()}
-            </div>
-            
-            {/* Column 3: Right */}
-            <div className="flex flex-col gap-4">
-              {renderMapperPlugin()}
-              {renderExecutionPlugin()}
-              {renderEvidencePlugin()}
-              {renderLogsPlugin()}
-            </div>
-          </div>
-        )}
-
-        {/* LAYOUT 2: SPLIT WORKSPACE (2 COLUMNS) */}
-        {layout === 'split' && (
-          <div className="layout-grid-2cols" style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '20px' }}>
-            {/* Column 1: Left */}
-            <div className="flex flex-col gap-4">
-              {renderIngestorPlugin()}
-              {renderFeedPlugin()}
-              {renderAdminPlugin()}
-              {renderMapperPlugin()}
-              {renderLogsPlugin()}
-            </div>
-            
-            {/* Column 2: Right */}
-            <div className="flex flex-col gap-4">
-              {renderVerificationPlugin()}
-              {renderExecutionPlugin()}
-              {renderEvidencePlugin()}
-            </div>
-          </div>
-        )}
-
-        {/* LAYOUT 3: FOCUS FRAME (TABBED SELECTOR) */}
-        {layout === 'focus' && (
-          <div className="flex flex-col gap-4">
-            {/* Tabs bar */}
-            <div className="flex flex-wrap gap-1 border-b border-slate-900 pb-1">
-              {[
-                { key: 'ingestor', label: 'Ingest Core', enabled: activePlugins.ingestor },
-                { key: 'feed', label: 'Repository Feed', enabled: activePlugins.feed },
-                { key: 'verification', label: 'Verification Studio', enabled: activePlugins.verification },
-                { key: 'mapper', label: 'DOM Mapper', enabled: activePlugins.mapper },
-                { key: 'logs', label: 'Engine Console', enabled: activePlugins.logs },
-                { key: 'admin', label: 'Admin Console', enabled: activePlugins.admin }
-              ].filter(t => t.enabled).map((t) => (
-                <button
-                  key={t.key}
-                  onClick={() => setFocusTab(t.key)}
-                  className={`px-4 py-2 font-mono text-[11px] font-bold border-t border-x rounded-t transition-all ${
-                    focusTab === t.key 
-                      ? 'bg-slate-900 border-slate-800 text-blue-400' 
-                      : 'bg-slate-950/40 border-slate-950/60 text-slate-500 hover:text-slate-300'
-                  }`}
-                  style={{ marginBottom: '-1px' }}
-                >
-                  {t.label}
-                </button>
-              ))}
-              {fillResult && activePlugins.evidence && (
-                <button
-                  onClick={() => setFocusTab('evidence')}
-                  className={`px-4 py-2 font-mono text-[11px] font-bold border-t border-x rounded-t transition-all ${
-                    focusTab === 'evidence' 
-                      ? 'bg-slate-900 border-slate-800 text-purple-400' 
-                      : 'bg-slate-950/40 border-slate-950/60 text-slate-500 hover:text-slate-300'
-                  }`}
-                  style={{ marginBottom: '-1px' }}
-                >
-                  Evidence View
-                </button>
-              )}
-            </div>
-
-            {/* Render single item */}
-            {focusTab === 'ingestor' && renderIngestorPlugin()}
-            {focusTab === 'feed' && renderFeedPlugin()}
-            {focusTab === 'verification' && (
-              <div className="flex flex-col gap-4">
-                {renderVerificationPlugin()}
-                {renderExecutionPlugin()}
+            {!sidebarCollapsed && (
+              <div className="logo-text">
+                <h2>Unitive Automate</h2>
+                <span>KEYSTONE v0.1.0-alpha.4</span>
               </div>
             )}
-            {focusTab === 'mapper' && renderMapperPlugin()}
-            {focusTab === 'logs' && renderLogsPlugin()}
-            {focusTab === 'evidence' && renderEvidencePlugin()}
-            {focusTab === 'admin' && renderAdminPlugin()}
           </div>
-        )}
 
-        {/* LAYOUT 4: DEDICATED FULLSCREEN ENTERPRISE ADMIN SCREEN */}
-        {layout === 'admin' && renderEnterpriseAdminScreen()}
-      </main>
+          {/* Sidebar Nav */}
+          <div className="erp-sidebar-nav">
+            
+            {/* Group: Operations */}
+            <div className="erp-sidebar-section-label">
+              {sidebarCollapsed ? 'OP' : 'Operations'}
+            </div>
+            
+            <button 
+              onClick={() => setActivePage('dashboard')}
+              className={`erp-sidebar-item ${activePage === 'dashboard' ? 'active' : ''}`}
+            >
+              <Activity className="nav-icon" />
+              {!sidebarCollapsed && <span className="nav-label">Dashboard</span>}
+            </button>
+
+            <button 
+              onClick={() => setActivePage('documents')}
+              className={`erp-sidebar-item ${activePage === 'documents' ? 'active' : ''}`}
+            >
+              <FileText className="nav-icon" />
+              {!sidebarCollapsed && <span className="nav-label">Documents</span>}
+            </button>
+
+            <button 
+              onClick={() => setActivePage('verification')}
+              className={`erp-sidebar-item ${activePage === 'verification' ? 'active' : ''}`}
+            >
+              <Sliders className="nav-icon" />
+              {!sidebarCollapsed && <span className="nav-label">Verification</span>}
+            </button>
+
+            <button 
+              onClick={() => setActivePage('automation')}
+              className={`erp-sidebar-item ${activePage === 'automation' ? 'active' : ''}`}
+            >
+              <Globe className="nav-icon" />
+              {!sidebarCollapsed && <span className="nav-label">Automation</span>}
+            </button>
+
+            <div className="erp-sidebar-divider" />
+
+            {/* Group: Administration */}
+            <div className="erp-sidebar-section-label">
+              {sidebarCollapsed ? 'ADM' : 'Administration'}
+            </div>
+
+            <button 
+              onClick={() => setActivePage('admin-metrics')}
+              className={`erp-sidebar-item ${activePage === 'admin-metrics' ? 'active' : ''}`}
+            >
+              <Activity className="nav-icon text-orange-500" />
+              {!sidebarCollapsed && <span className="nav-label">Metrics</span>}
+            </button>
+
+            <button 
+              onClick={() => setActivePage('admin-settings')}
+              className={`erp-sidebar-item ${activePage === 'admin-settings' ? 'active' : ''}`}
+            >
+              <Settings className="nav-icon" />
+              {!sidebarCollapsed && <span className="nav-label">Settings</span>}
+            </button>
+
+            <button 
+              onClick={() => setActivePage('admin-keys')}
+              className={`erp-sidebar-item ${activePage === 'admin-keys' ? 'active' : ''}`}
+            >
+              <Key className="nav-icon" />
+              {!sidebarCollapsed && <span className="nav-label">API Keys</span>}
+            </button>
+
+            <button 
+              onClick={() => setActivePage('admin-logs')}
+              className={`erp-sidebar-item ${activePage === 'admin-logs' ? 'active' : ''}`}
+            >
+              <ShieldAlert className="nav-icon" />
+              {!sidebarCollapsed && <span className="nav-label">Audit Logs</span>}
+            </button>
+
+            <div className="erp-sidebar-divider" />
+
+            {/* Group: System */}
+            <div className="erp-sidebar-section-label">
+              {sidebarCollapsed ? 'SYS' : 'System'}
+            </div>
+
+            <button 
+              onClick={() => setActivePage('console')}
+              className={`erp-sidebar-item ${activePage === 'console' ? 'active' : ''}`}
+            >
+              <Terminal className="nav-icon" />
+              {!sidebarCollapsed && <span className="nav-label">Live Console</span>}
+            </button>
+
+          </div>
+
+          {/* Sidebar Collapse Toggle Button */}
+          <button 
+            onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+            className="erp-sidebar-collapse-btn"
+          >
+            <ChevronRight className={`nav-icon collapse-icon ${!sidebarCollapsed ? 'expanded' : ''}`} />
+            {!sidebarCollapsed && <span>Collapse Sidebar</span>}
+          </button>
+
+        </aside>
+
+        {/* Main Content Area */}
+        <main className={`erp-main-content ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
+          
+          {/* Topbar breadcrumb / stats header */}
+          <div className="erp-topbar">
+            <div className="erp-topbar-left">
+              <span className="erp-topbar-breadcrumb">
+                {activePage === 'dashboard' && 'Dashboard Overview'}
+                {activePage === 'documents' && 'Document Repositories'}
+                {activePage === 'verification' && 'Verification Studio'}
+                {activePage === 'automation' && 'Execution Portal Mapper'}
+                {activePage === 'admin-metrics' && 'Security & Operational Telemetry'}
+                {activePage === 'admin-settings' && 'Enterprise System Protection'}
+                {activePage === 'admin-keys' && 'Workspace Key Registry'}
+                {activePage === 'admin-logs' && 'Security Audit Terminal'}
+                {activePage === 'console' && 'System Engine Live Feed'}
+              </span>
+            </div>
+
+            <div className="erp-topbar-right">
+              {/* Status Led */}
+              <div className="erp-topbar-stat">
+                <span className={`led ${backendOnline ? 'led-green' : 'led-red'} led-pulse`} style={{ width: '6px', height: '6px' }}></span>
+                <span>{backendOnline ? 'SECURE_LINK' : 'OFFLINE'}</span>
+              </div>
+              
+              {/* Latency if online */}
+              {backendOnline && (
+                <div className="erp-topbar-stat" style={{ borderLeft: '1px solid var(--border-color)', paddingLeft: '12px' }}>
+                  <span>LATENCY: {latency}ms</span>
+                </div>
+              )}
+
+              {/* Total documents count */}
+              <div className="erp-topbar-stat" style={{ borderLeft: '1px solid var(--border-color)', paddingLeft: '12px' }}>
+                <span>DB FEED: {documentsList.length} BUFFERS</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Content Pane */}
+          <div className="erp-page-content">
+            
+            {/* 1. DASHBOARD PAGE */}
+            {activePage === 'dashboard' && (
+              <div className="flex flex-col gap-6">
+                
+                {/* 2x3 Grid KPI Cards */}
+                <div className="kpi-grid">
+                  <div className="kpi-card">
+                    <span className="kpi-label">TOTAL DOCUMENTS</span>
+                    <span className="kpi-value">{documentsList.length}</span>
+                    <span className="kpi-sub">Buffered in repository database</span>
+                  </div>
+
+                  <div className="kpi-card">
+                    <span className="kpi-label">SUCCESS INJECTION RATE</span>
+                    <span className="kpi-value" style={{ color: 'var(--success-color)' }}>
+                      {adminMetrics.success_rate_percent}%
+                    </span>
+                    <span className="kpi-sub">Fields successfully verified</span>
+                  </div>
+
+                  <div className="kpi-card">
+                    <span className="kpi-label">BACKEND STATUS</span>
+                    <span className="kpi-value" style={{ color: backendOnline ? 'var(--success-color)' : 'var(--danger-color)' }}>
+                      {backendOnline ? 'ONLINE' : 'OFFLINE'}
+                    </span>
+                    <span className="kpi-sub">{backendOnline ? 'API service responding normally' : 'Check server status at port 8000'}</span>
+                  </div>
+
+                  <div className="kpi-card">
+                    <span className="kpi-label">AVG OCR LATENCY</span>
+                    <span className="kpi-value">{adminMetrics.avg_ocr_latency_sec}s</span>
+                    <span className="kpi-sub">Document text detection speed</span>
+                  </div>
+
+                  <div className="kpi-card">
+                    <span className="kpi-label">AVG LLM COGNITIVE LATENCY</span>
+                    <span className="kpi-value">{adminMetrics.avg_llm_latency_sec}s</span>
+                    <span className="kpi-sub">SLM field mapping inference</span>
+                  </div>
+
+                  <div className="kpi-card">
+                    <span className="kpi-label">ESTIMATED API COST</span>
+                    <span className="kpi-value" style={{ color: 'var(--accent-secondary)' }}>
+                      ${adminMetrics.estimated_api_cost_usd}
+                    </span>
+                    <span className="kpi-sub">Accumulated Gemini API credits</span>
+                  </div>
+                </div>
+
+                {/* Quick actions row */}
+                <div className="page-section">
+                  <div className="page-section-header">
+                    <Sliders className="w-4 h-4 text-orange-500" />
+                    <h3>Quick Management Controls</h3>
+                  </div>
+                  <div className="flex gap-4">
+                    <button 
+                      onClick={() => setActivePage('documents')}
+                      className="btn-premium"
+                    >
+                      UPLOAD NEW DOCUMENT
+                    </button>
+                    <button 
+                      onClick={() => setActivePage('documents')}
+                      className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-700 rounded text-[11px] font-bold transition-all"
+                    >
+                      VIEW REPOSITORY FEED
+                    </button>
+                  </div>
+                </div>
+
+                {/* Recent Activity Logs */}
+                <div className="page-section">
+                  <div className="page-section-header">
+                    <Terminal className="w-4 h-4 text-orange-500" />
+                    <h3>Recent System Activity Logs</h3>
+                  </div>
+                  <div className="bg-slate-950 rounded p-4 font-mono text-xs text-emerald-400 flex flex-col gap-1.5 overflow-y-auto max-h-[220px]">
+                    {logs.slice(-5).map((log) => (
+                      <div className="log-line" key={log.id}>
+                        <span className="log-time">[{log.time}]</span>
+                        <span className={`log-tag-${log.type}`}>{log.type.toUpperCase()}: </span>
+                        <span className="text-slate-300">{log.message}</span>
+                      </div>
+                    ))}
+                    {logs.length === 0 && <div className="text-slate-600 italic">No telemetry streams captured...</div>}
+                  </div>
+                </div>
+
+              </div>
+            )}
+
+            {/* 2. DOCUMENTS PAGE */}
+            {activePage === 'documents' && (
+              <div className="flex flex-col gap-6">
+                <div className="split-panel">
+                  
+                  {/* Left Side: Ingestor */}
+                  <div className="flex flex-col gap-4">
+                    {renderIngestorPlugin()}
+                  </div>
+
+                  {/* Right Side: Feed */}
+                  <div className="flex flex-col gap-4">
+                    {renderFeedPlugin()}
+                  </div>
+
+                </div>
+
+                {/* Bottom row: Ingest progress tracker */}
+                {uploadProgress && (
+                  <div className="progress-tracker mt-2 flex flex-col gap-2">
+                    <div className="flex justify-between items-center text-xs">
+                      <span className="font-semibold text-slate-700">DOCUMENT INGESTION PROCESSING SEQUENCE:</span>
+                      <span className="font-mono text-orange-600 font-bold uppercase">{uploadProgress}</span>
+                    </div>
+                    <div className="w-full bg-slate-200 h-2.5 rounded overflow-hidden">
+                      <div 
+                        className="bg-orange-500 h-full transition-all duration-500"
+                        style={{
+                          width: 
+                            uploadProgress === 'uploading' ? '25%' :
+                            uploadProgress === 'preprocessing' ? '45%' :
+                            uploadProgress === 'ocr' ? '70%' :
+                            uploadProgress === 'slm' ? '90%' :
+                            uploadProgress === 'completed' ? '100%' : '0%'
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* 3. VERIFICATION PAGE */}
+            {activePage === 'verification' && (
+              <div className="flex flex-col gap-6">
+                <div className="page-section">
+                  <div className="page-section-header">
+                    <Sliders className="w-4 h-4 text-orange-500" />
+                    <h3>INTELLIGENT VERIFICATION STUDIO</h3>
+                  </div>
+                  {renderVerificationPlugin()}
+                </div>
+              </div>
+            )}
+
+            {/* 4. AUTOMATION PAGE */}
+            {activePage === 'automation' && (
+              <div className="flex flex-col gap-6">
+                
+                {/* Top: Portal Mapper */}
+                <div className="page-section">
+                  <div className="page-section-header">
+                    <Globe className="w-4 h-4 text-orange-500" />
+                    <h3>Portal Mapper</h3>
+                  </div>
+                  {renderMapperPlugin()}
+                </div>
+
+                {/* Middle: Execution controls */}
+                <div className="page-section">
+                  <div className="page-section-header">
+                    <Play className="w-4 h-4 text-orange-500" />
+                    <h3>Execution Engine Control</h3>
+                  </div>
+                  {renderExecutionPlugin()}
+                </div>
+
+                {/* Bottom: Evidence Viewer */}
+                {fillResult && (
+                  <div className="page-section">
+                    <div className="page-section-header">
+                      <Monitor className="w-4 h-4 text-purple-500" />
+                      <h3>Screen Evidence Viewer</h3>
+                    </div>
+                    {renderEvidencePlugin()}
+                  </div>
+                )}
+
+              </div>
+            )}
+
+            {/* 5. ADMIN METRICS PAGE */}
+            {activePage === 'admin-metrics' && (
+              <div className="flex flex-col gap-6">
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  
+                  {/* Operational Metrics */}
+                  <div className="page-section">
+                    <div className="page-section-header">
+                      <Activity className="w-4 h-4 text-orange-500" />
+                      <h3>Operational Metrics</h3>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3 text-[11px] font-mono">
+                      {[
+                        { label: 'Total Ingested', value: adminMetrics.total_documents, color: 'text-slate-800' },
+                        { label: 'Success Rate', value: `${adminMetrics.success_rate_percent}%`, color: 'text-emerald-600 font-bold' },
+                        { label: 'Error Rate', value: `${adminMetrics.error_rate_percent || 0.0}%`, color: 'text-rose-600' },
+                        { label: 'Active Sessions', value: adminMetrics.active_users || 3, color: 'text-purple-600' },
+                        { label: 'Daily Requests', value: adminMetrics.daily_requests || 0, color: 'text-blue-600' },
+                        { label: 'Active Workers', value: adminMetrics.active_queue_workers, color: 'text-teal-600' }
+                      ].map((m, idx) => (
+                        <div key={idx} className="bg-slate-50 border border-slate-200 p-3 rounded flex flex-col gap-1">
+                          <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">{m.label}</span>
+                          <span className={`text-sm font-bold ${m.color}`}>{m.value}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Security Interceptions */}
+                  <div className="page-section">
+                    <div className="page-section-header">
+                      <ShieldAlert className="w-4 h-4 text-rose-500" />
+                      <h3>Security Interceptions</h3>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3 text-[11px] font-mono">
+                      <div className="bg-slate-50 border border-slate-200 p-3 rounded flex flex-col gap-1">
+                        <span className="text-[9px] text-slate-500 font-bold uppercase">Malware Quarantined</span>
+                        <span className="text-sm text-rose-600 font-bold">{adminMetrics.quarantined_files_blocked} threats</span>
+                      </div>
+                      <div className="bg-slate-50 border border-slate-200 p-3 rounded flex flex-col gap-1">
+                        <span className="text-[9px] text-slate-500 font-bold uppercase">Prompt Injections</span>
+                        <span className="text-sm text-amber-600 font-bold">{adminMetrics.prompt_injections_neutralized} blocks</span>
+                      </div>
+                      <div className="bg-slate-50 border border-slate-200 p-3 rounded flex flex-col gap-1">
+                        <span className="text-[9px] text-slate-500 font-bold uppercase">Rate Limit Triggers</span>
+                        <span className="text-sm text-orange-600 font-bold">{adminMetrics.rate_limit_429_count} (429s)</span>
+                      </div>
+                      <div className="bg-slate-50 border border-slate-200 p-3 rounded flex flex-col gap-1">
+                        <span className="text-[9px] text-slate-500 font-bold uppercase">Deduplication Hits</span>
+                        <span className="text-sm text-emerald-600 font-bold">{adminMetrics.duplicate_cache_hits} inputs</span>
+                      </div>
+                    </div>
+                  </div>
+
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  
+                  {/* Cache Telemetry */}
+                  <div className="page-section">
+                    <div className="page-section-header">
+                      <Database className="w-4 h-4 text-pink-500" />
+                      <h3>Cache Telemetry HUD</h3>
+                    </div>
+                    <div className="flex flex-col gap-2 font-mono text-[11px]">
+                      <div className="flex justify-between items-center p-2.5 bg-slate-50 border border-slate-250 rounded">
+                        <span className="text-slate-500 font-medium">Cache Service Status:</span>
+                        <span className="font-bold text-slate-800">{adminMetrics.cache_service_status || 'InMemory Cache Service'}</span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 mt-1">
+                        <div className="flex flex-col p-2 bg-slate-50 border border-slate-200 rounded text-center">
+                          <span className="text-slate-400 text-[8px] uppercase font-bold tracking-wide">Workspace Settings</span>
+                          <span className="font-bold text-blue-600 text-[10px] mt-1">10m Cache (Active)</span>
+                        </div>
+                        <div className="flex flex-col p-2 bg-slate-50 border border-slate-200 rounded text-center">
+                          <span className="text-slate-400 text-[8px] uppercase font-bold tracking-wide">API key verify</span>
+                          <span className="font-bold text-blue-600 text-[10px] mt-1">10m Cache (Active)</span>
+                        </div>
+                        <div className="flex flex-col p-2 bg-slate-50 border border-slate-200 rounded text-center">
+                          <span className="text-slate-400 text-[8px] uppercase font-bold tracking-wide">OCR Results</span>
+                          <span className="font-bold text-blue-600 text-[10px] mt-1">24h Cache (Active)</span>
+                        </div>
+                        <div className="flex flex-col p-2 bg-slate-50 border border-slate-200 rounded text-center">
+                          <span className="text-slate-400 text-[8px] uppercase font-bold tracking-wide">AI Extraction</span>
+                          <span className="font-bold text-blue-600 text-[10px] mt-1">30d Cache (Active)</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Cognitive Extraction Metrics */}
+                  <div className="page-section">
+                    <div className="page-section-header">
+                      <Cpu className="w-4 h-4 text-indigo-500" />
+                      <h3>Cognitive Extraction Metrics</h3>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3 text-[11px] font-mono">
+                      <div className="bg-slate-50 border border-slate-200 p-3 rounded flex flex-col gap-1">
+                        <span className="text-[9px] text-slate-500 font-bold uppercase">Estimated Month Cost</span>
+                        <span className="text-sm text-indigo-600 font-bold">${adminMetrics.monthly_cost_usd || 0.0} USD</span>
+                      </div>
+                      <div className="bg-slate-50 border border-slate-200 p-3 rounded flex flex-col gap-1">
+                        <span className="text-[9px] text-slate-500 font-bold uppercase">Estimated Today Cost</span>
+                        <span className="text-sm text-indigo-600 font-bold">${adminMetrics.today_cost_usd || 0.0} USD</span>
+                      </div>
+                    </div>
+                  </div>
+
+                </div>
+
+              </div>
+            )}
+
+            {/* 6. ADMIN SETTINGS PAGE */}
+            {activePage === 'admin-settings' && (
+              <div className="flex flex-col gap-6">
+                <div className="page-section">
+                  <div className="page-section-header">
+                    <Settings className="w-4 h-4 text-orange-500" />
+                    <h3>Enterprise Security Config</h3>
+                  </div>
+                  
+                  <div className="flex flex-col gap-6">
+                    
+                    {/* Rate Limiting */}
+                    <div className="settings-group">
+                      <h4 className="settings-group-title">Rate Limiting Thresholds</h4>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div className="flex flex-col gap-1">
+                          <div className="flex justify-between text-[11px] font-bold">
+                            <span className="text-slate-600">Rate Limit (Per API Key)</span>
+                            <span className="text-orange-600 font-mono">{adminSettings.rate_limit_api_key} req/m</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="10"
+                            max="500"
+                            step="10"
+                            value={adminSettings.rate_limit_api_key}
+                            onChange={(e) => saveAdminSettings({ ...adminSettings, rate_limit_api_key: parseInt(e.target.value) })}
+                            className="w-full accent-orange-500 cursor-pointer h-1 rounded-lg"
+                          />
+                        </div>
+
+                        <div className="flex flex-col gap-1">
+                          <div className="flex justify-between text-[11px] font-bold">
+                            <span className="text-slate-600">Rate Limit (Unauth Per IP)</span>
+                            <span className="text-orange-600 font-mono">{adminSettings.rate_limit_ip} req/m</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="5"
+                            max="100"
+                            step="5"
+                            value={adminSettings.rate_limit_ip}
+                            onChange={(e) => saveAdminSettings({ ...adminSettings, rate_limit_ip: parseInt(e.target.value) })}
+                            className="w-full accent-orange-500 cursor-pointer h-1 rounded-lg"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* File Handling */}
+                    <div className="settings-group">
+                      <h4 className="settings-group-title">File Ingestion Controls</h4>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div className="flex flex-col gap-1">
+                          <div className="flex justify-between text-[11px] font-bold">
+                            <span className="text-slate-600">Max File Size Limit</span>
+                            <span className="text-blue-600 font-mono">{adminSettings.max_file_size_mb} MB</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="1"
+                            max="100"
+                            step="1"
+                            value={adminSettings.max_file_size_mb}
+                            onChange={(e) => saveAdminSettings({ ...adminSettings, max_file_size_mb: parseInt(e.target.value) })}
+                            className="w-full accent-blue-500 cursor-pointer h-1 rounded-lg"
+                          />
+                        </div>
+
+                        <div className="flex flex-col gap-1">
+                          <div className="flex justify-between text-[11px] font-bold">
+                            <span className="text-slate-600">Allowed Ingestion Extensions</span>
+                          </div>
+                          <input
+                            type="text"
+                            value={adminSettings.allowed_extensions.join(', ')}
+                            onChange={(e) => saveAdminSettings({ ...adminSettings, allowed_extensions: e.target.value.split(',').map(s => s.trim().toLowerCase()).filter(Boolean) })}
+                            className="input-glass text-xs py-1.5 px-2 mt-1"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Timeouts & Retention */}
+                    <div className="settings-group">
+                      <h4 className="settings-group-title">System Timeouts & Retention</h4>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <div className="flex flex-col gap-1">
+                          <span className="text-[10px] font-bold text-slate-600">OCR Engine Timeout (seconds)</span>
+                          <input
+                            type="number"
+                            value={adminSettings.timeout_ocr_sec}
+                            onChange={(e) => saveAdminSettings({ ...adminSettings, timeout_ocr_sec: parseInt(e.target.value) || 60 })}
+                            className="input-glass text-xs py-1.5 px-2 mt-1"
+                          />
+                        </div>
+
+                        <div className="flex flex-col gap-1">
+                          <span className="text-[10px] font-bold text-slate-600">LLM Cognitive Timeout (seconds)</span>
+                          <input
+                            type="number"
+                            value={adminSettings.timeout_llm_sec}
+                            onChange={(e) => saveAdminSettings({ ...adminSettings, timeout_llm_sec: parseInt(e.target.value) || 90 })}
+                            className="input-glass text-xs py-1.5 px-2 mt-1"
+                          />
+                        </div>
+
+                        <div className="flex flex-col gap-1">
+                          <div className="flex justify-between text-[11px] font-bold">
+                            <span className="text-slate-600">Data Retention Mode</span>
+                            <span className="text-blue-600 font-mono">{adminSettings.data_retention_days} days</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="7"
+                            max="365"
+                            step="7"
+                            value={adminSettings.data_retention_days}
+                            onChange={(e) => saveAdminSettings({ ...adminSettings, data_retention_days: parseInt(e.target.value) })}
+                            className="w-full accent-blue-500 cursor-pointer h-1 rounded-lg"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Security Features */}
+                    <div className="settings-group">
+                      <h4 className="settings-group-title">Security Shield Features</h4>
+                      <div className="flex flex-col gap-3">
+                        {[
+                          { key: 'virus_scanning_enabled', label: 'Enable ClamAV Anti-Malware & Ingestion Quarantine Scanning' },
+                          { key: 'prompt_injection_protection', label: 'Enable Precompiled System Override Prompt Injection Protection' },
+                          { key: 'duplicate_detection_sha256', label: 'Enable Request Deduplication Cache (SHA-256)' }
+                        ].map(item => (
+                          <label key={item.key} className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-slate-600">
+                            <input
+                              type="checkbox"
+                              checked={adminSettings[item.key]}
+                              onChange={(e) => saveAdminSettings({ ...adminSettings, [item.key]: e.target.checked })}
+                              className="rounded border-slate-300 text-orange-600 focus:ring-orange-500"
+                            />
+                            <span>{item.label}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Webhooks */}
+                    <div className="settings-group">
+                      <h4 className="settings-group-title">Webhook Callbacks</h4>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div className="flex flex-col gap-1">
+                          <span className="text-[10px] font-bold text-slate-600">Callback Endpoint URL</span>
+                          <input
+                            type="text"
+                            placeholder="https://client-system.com/webhooks"
+                            value={adminSettings.webhook_url}
+                            onChange={(e) => saveAdminSettings({ ...adminSettings, webhook_url: e.target.value })}
+                            className="input-glass text-xs py-1.5 px-2 mt-1"
+                          />
+                        </div>
+
+                        <div className="flex flex-col gap-1">
+                          <div className="flex justify-between text-[10px] font-bold">
+                            <span className="text-slate-600">Webhook Signature Secret (HMAC-SHA256)</span>
+                            <button 
+                              onClick={() => saveAdminSettings({ ...adminSettings, webhook_secret: `unitive_hmac_${Math.random().toString(36).substring(2, 10)}` })}
+                              className="text-[9px] text-orange-600 font-mono font-bold hover:underline"
+                            >
+                              [ROTATE SECRET]
+                            </button>
+                          </div>
+                          <input
+                            type="text"
+                            value={adminSettings.webhook_secret}
+                            onChange={(e) => saveAdminSettings({ ...adminSettings, webhook_secret: e.target.value })}
+                            className="input-glass text-xs font-mono py-1.5 px-2 mt-1"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* 7. ADMIN API KEYS PAGE */}
+            {activePage === 'admin-keys' && (
+              <div className="flex flex-col gap-6">
+                <div className="page-section">
+                  <div className="page-section-header">
+                    <Key className="w-4 h-4 text-orange-500" />
+                    <h3>Workspace API Keys Management</h3>
+                  </div>
+
+                  <div className="flex flex-col gap-4">
+                    <div className="bg-slate-50 border border-slate-200 rounded p-4 flex flex-col gap-3">
+                      <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider font-mono">Issue New Workspace Key</span>
+                      
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        <input
+                          type="text"
+                          placeholder="Workspace Name (e.g. ERP Retail)"
+                          value={newKeyWorkspace}
+                          onChange={(e) => setNewKeyWorkspace(e.target.value)}
+                          className="input-glass text-xs py-1.5 px-2"
+                        />
+                        <input
+                          type="text"
+                          placeholder="Key Name (e.g. Production server)"
+                          value={newKeyName}
+                          onChange={(e) => setNewKeyName(e.target.value)}
+                          className="input-glass text-xs py-1.5 px-2"
+                        />
+                        <select
+                          value={newKeyRole}
+                          onChange={(e) => setNewKeyRole(e.target.value)}
+                          className="bg-white border border-slate-200 text-xs rounded px-2.5 py-1.5 text-slate-600 focus:outline-none"
+                        >
+                          <option value="Admin">Admin</option>
+                          <option value="Developer">Developer</option>
+                          <option value="Read Only">Read Only</option>
+                          <option value="Billing">Billing</option>
+                        </select>
+                      </div>
+
+                      <div className="flex justify-end">
+                        <button
+                          onClick={handleCreateAPIKey}
+                          className="px-4 py-2 bg-orange-600 hover:bg-orange-500 text-white rounded text-[10px] font-bold transition-colors"
+                        >
+                          GENERATE API KEY
+                        </button>
+                      </div>
+                    </div>
+
+                    {newlyCreatedKey && (
+                      <div className="p-4 bg-emerald-50 border border-emerald-200 rounded text-emerald-800 text-xs flex flex-col gap-2 font-mono">
+                        <span className="font-bold text-emerald-700 uppercase">[!] SECURE PLAIN-TEXT API KEY GENERATED:</span>
+                        <div className="flex gap-2 items-center bg-white border border-emerald-200 p-2 rounded">
+                          <span className="text-emerald-900 font-bold select-all flex-1 text-xs truncate">{newlyCreatedKey.raw_key}</span>
+                          <button
+                            onClick={() => {
+                              navigator.clipboard.writeText(newlyCreatedKey.raw_key);
+                              alert("Plaintext key copied! Save it now. It will not be shown again.");
+                            }}
+                            className="px-3.5 py-1 bg-slate-900 hover:bg-slate-800 text-white rounded text-[10px] font-bold"
+                          >
+                            COPY KEY
+                          </button>
+                        </div>
+                        <span className="text-[9px] text-emerald-600">This key is hashed using SHA-256 before storage. Keep it safe. Plaintext cannot be recovered.</span>
+                      </div>
+                    )}
+
+                    <div className="overflow-x-auto border border-slate-200 rounded bg-white">
+                      <table className="min-w-full divide-y divide-slate-250 text-xs">
+                        <thead className="bg-slate-50 font-mono">
+                          <tr>
+                            <th className="px-4 py-2.5 text-left text-[9px] font-bold text-slate-500 uppercase">Descriptor</th>
+                            <th className="px-4 py-2.5 text-left text-[9px] font-bold text-slate-500 uppercase">Workspace</th>
+                            <th className="px-4 py-2.5 text-left text-[9px] font-bold text-slate-500 uppercase">Prefix</th>
+                            <th className="px-4 py-2.5 text-left text-[9px] font-bold text-slate-500 uppercase">Role</th>
+                            <th className="px-4 py-2.5 text-left text-[9px] font-bold text-slate-500 uppercase">State</th>
+                            <th className="px-4 py-2.5 text-right text-[9px] font-bold text-slate-500 uppercase">Control</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-150 font-mono">
+                          {adminKeys.map((k) => (
+                            <tr key={k.key_id} className="hover:bg-slate-50">
+                              <td className="px-4 py-2.5 font-semibold text-slate-700">{k.name}</td>
+                              <td className="px-4 py-2.5 text-slate-500 truncate max-w-[150px]">{k.workspace}</td>
+                              <td className="px-4 py-2.5 text-slate-600 font-bold">{k.prefix}</td>
+                              <td className="px-4 py-2.5">
+                                <span className={`px-2 py-0.5 rounded text-[8px] font-bold uppercase ${
+                                  k.role === 'Admin' ? 'bg-red-50 text-red-600 border border-red-100' :
+                                  k.role === 'Developer' ? 'bg-blue-50 text-blue-600 border border-blue-100' :
+                                  k.role === 'Billing' ? 'bg-amber-50 text-amber-600 border border-amber-100' :
+                                  'bg-slate-50 text-slate-600 border border-slate-100'
+                                }`}>
+                                  {k.role}
+                                </span>
+                              </td>
+                              <td className="px-4 py-2.5">
+                                <span className={`px-2 py-0.5 rounded text-[8px] font-bold uppercase ${
+                                  k.status === 'active' ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' : 'bg-rose-50 text-rose-600 border border-rose-100'
+                                }`}>
+                                  {k.status}
+                                </span>
+                              </td>
+                              <td className="px-4 py-2.5 text-right">
+                                <div className="flex justify-end gap-1.5">
+                                  {k.status === 'active' && (
+                                    <>
+                                      <button
+                                        onClick={() => handleRotateKey(k.key_id)}
+                                        className="px-2 py-1 bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded text-[9px] font-bold text-slate-600"
+                                      >
+                                        ROTATE
+                                      </button>
+                                      <button
+                                        onClick={() => handleRevokeKey(k.key_id)}
+                                        className="px-2 py-1 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded text-[9px] font-bold text-rose-600"
+                                      >
+                                        REVOKE
+                                      </button>
+                                    </>
+                                  )}
+                                  <button
+                                    onClick={() => handleDeleteKey(k.key_id)}
+                                    className="p-1 text-slate-400 hover:text-rose-500 rounded"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* 8. ADMIN AUDIT LOGS PAGE */}
+            {activePage === 'admin-logs' && (
+              <div className="flex flex-col gap-6">
+                <div className="page-section">
+                  <div className="page-section-header justify-between">
+                    <div className="flex items-center gap-2">
+                      <ShieldAlert className="w-4 h-4 text-orange-500" />
+                      <h3>Security Audit Logs</h3>
+                    </div>
+                    <button
+                      onClick={handleClearAdminLogs}
+                      className="text-[10px] font-mono text-red-500 hover:underline border-none bg-transparent cursor-pointer font-bold"
+                    >
+                      [PURGE AUDIT LOG DATABASE]
+                    </button>
+                  </div>
+
+                  <div className="bg-slate-950 text-slate-300 font-mono text-xs rounded p-4 overflow-y-auto max-h-[480px] flex flex-col gap-2">
+                    {adminLogs.length === 0 ? (
+                      <div className="text-slate-600 italic">No security events triggered. Shield secure.</div>
+                    ) : (
+                      adminLogs.map((log, idx) => {
+                        let badgeColor = 'text-slate-400 border border-slate-800 bg-slate-900';
+                        if (log.event_type === 'quarantine' || log.level === 'WARNING' || log.event_type === 'injection') badgeColor = 'text-red-400 border border-red-950 bg-red-950/20';
+                        else if (log.event_type === 'ratelimit') badgeColor = 'text-orange-400 border border-orange-950 bg-orange-950/20';
+                        else if (log.event_type === 'auth') badgeColor = 'text-purple-400 border border-purple-950 bg-purple-950/20';
+                        else if (log.event_type === 'audit') badgeColor = 'text-emerald-400 border border-emerald-950 bg-emerald-950/20';
+                        else if (log.event_type === 'config') badgeColor = 'text-blue-400 border border-blue-950 bg-blue-950/20';
+
+                        return (
+                          <div key={idx} className="flex gap-3 items-start py-1 border-b border-slate-900 last:border-0 font-mono">
+                            <span className="text-slate-600 font-semibold">{log.timestamp?.slice(11, 19) || ''}</span>
+                            <span className={`px-1.5 py-0.5 rounded text-[8px] font-bold uppercase shrink-0 ${badgeColor}`}>
+                              {log.event_type || 'system'}
+                            </span>
+                            <span className="flex-1 text-slate-200">{log.message}</span>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* 9. LIVE CONSOLE PAGE */}
+            {activePage === 'console' && (
+              <div className="flex flex-col gap-6">
+                <div className="page-section">
+                  <div className="page-section-header justify-between">
+                    <div className="flex items-center gap-2">
+                      <Terminal className="w-4 h-4 text-orange-500" />
+                      <h3>Live Engine Console Stream</h3>
+                    </div>
+                    <button 
+                      onClick={() => setLogs([])}
+                      className="text-[10px] font-mono text-slate-400 hover:underline border-none bg-transparent cursor-pointer font-bold"
+                    >
+                      [CLEAR CONSOLE]
+                    </button>
+                  </div>
+
+                  <div className="bg-slate-950 rounded p-4 font-mono text-xs text-emerald-400 flex flex-col gap-1.5 overflow-y-auto h-[480px]">
+                    {logs.map((log) => (
+                      <div className="log-line" key={log.id}>
+                        <span className="log-time">[{log.time}]</span>
+                        <span className={`log-tag-${log.type}`}>{log.type.toUpperCase()}: </span>
+                        <span className="text-slate-300">{log.message}</span>
+                      </div>
+                    ))}
+                    {logs.length === 0 && <div className="text-slate-600 italic">No telemetry streams captured...</div>}
+                    <div ref={logEndRef} />
+                  </div>
+                </div>
+              </div>
+            )}
+
+          </div>
+
+        </main>
+
+      </div>
 
       {/* Corporate Verification Summary Modal */}
       {showScreenshot && fillResult && (
@@ -2896,63 +3508,40 @@ export default function App() {
               {/* Tabular summary list if bulkResult is present */}
               {bulkResult ? (
                 <div className="flex flex-col gap-4">
-                  <div className="p-4 rounded bg-blue-500/5 border border-blue-500/10 flex justify-between items-center font-mono">
+                  <div className="p-4 rounded bg-blue-500/5 border border-blue-500/10 flex justify-between items-center font-mono text-[11px]">
                     <div>
-                      <h4 className="text-xs font-bold text-slate-200">BULK BATCH EXECUTION SUCCESS</h4>
-                      <p className="text-[10px] text-slate-500 mt-1">Processed all entries in the workspace registry using automated worker browser containers.</p>
-                    </div>
-                    <div className="text-right">
-                      <span className="text-2xl font-black text-blue-400">
-                        {bulkResult.results?.filter(r => r.success).length} / {bulkResult.results?.length}
-                      </span>
-                      <p className="text-[8px] uppercase tracking-wider text-slate-500 font-bold mt-1">Succeeded Rows</p>
+                      <h4 className="text-xs font-bold text-blue-400">BATCH TRANSACTION AGENT LOG</h4>
+                      <p className="text-[10px] text-slate-500 mt-0.5">Execution Summary metrics of bulk automated invoice injection.</p>
                     </div>
                   </div>
-
+                  
                   <div className="overflow-x-auto border border-slate-900 rounded bg-slate-950">
-                    <table className="summary-table-wrapper">
+                    <table className="summary-table-wrapper font-mono" style={{ marginTop: 0 }}>
                       <thead>
-                        <tr>
-                          <th className="summary-table-header">Index</th>
-                          <th className="summary-table-header">Customer Identity</th>
-                          <th className="summary-table-header">State</th>
-                          <th className="summary-table-header">Execution Comments</th>
-                          <th className="summary-table-header text-right">Evidence Link</th>
+                        <tr className="bg-slate-900 text-slate-400 font-bold">
+                          <th className="summary-table-header text-[9px] border-b border-slate-900">Index</th>
+                          <th className="summary-table-header text-[9px] border-b border-slate-900">Invoice ID</th>
+                          <th className="summary-table-header text-[9px] border-b border-slate-900">Purity</th>
+                          <th className="summary-table-header text-[9px] border-b border-slate-900">Total Amount</th>
+                          <th className="summary-table-header text-[9px] border-b border-slate-900">Injected Fields</th>
+                          <th className="summary-table-header text-[9px] border-b border-slate-900">Execution Status</th>
                         </tr>
                       </thead>
-                      <tbody>
-                        {(() => {
-                          const docData = documentData?.corrected_json || documentData?.extracted_json || {};
-                          const records = docData.records || [];
-                          return bulkResult.results?.map((res, i) => {
-                            const recName = res.customer_name || records[res.record_index]?.full_name || records[res.record_index]?.name || `Record ${res.record_index + 1}`;
-                            const screenshotUrl = res.screenshot_url || `/static/screenshots/screenshot_bulk_${res.record_index}.png`;
-                            return (
-                              <tr key={i} className="summary-table-row">
-                                <td className="summary-table-cell text-slate-500 font-mono">#{res.record_index + 1}</td>
-                                <td className="summary-table-cell font-medium text-slate-200 font-mono">{recName}</td>
-                                <td className="summary-table-cell">
-                                  <span className={`badge ${res.success ? 'badge-completed' : 'badge-failed'}`} style={{ fontSize: '8px', padding: '1px 4px' }}>
-                                    {res.success ? 'Success' : 'Error'}
-                                  </span>
-                                </td>
-                                <td className="summary-table-cell text-slate-400 font-mono text-[10px]">
-                                  {res.success ? 'Injected successfully and validation satisfied' : res.errors?.join('; ') || 'Record validation failed'}
-                                </td>
-                                <td className="summary-table-cell text-right">
-                                  <a 
-                                    href={screenshotUrl} 
-                                    target="_blank" 
-                                    rel="noreferrer"
-                                    className="text-blue-400 hover:text-blue-300 font-semibold underline font-mono text-[10px]"
-                                  >
-                                    [VIEW]
-                                  </a>
-                                </td>
-                              </tr>
-                            );
-                          });
-                        })()}
+                      <tbody className="divide-y divide-slate-900">
+                        {bulkResult.results?.map((r, idx) => (
+                          <tr key={idx} className="summary-table-row hover:bg-slate-900/50">
+                            <td className="summary-table-cell text-slate-400">{idx + 1}</td>
+                            <td className="summary-table-cell text-slate-200 font-bold">{r.document_id?.slice(0, 12)}...</td>
+                            <td className="summary-table-cell text-indigo-400">{r.inferred_data?.purity || 'N/A'}</td>
+                            <td className="summary-table-cell text-orange-400 font-bold">${r.inferred_data?.total_amount || '0.00'}</td>
+                            <td className="summary-table-cell text-slate-300">{r.filled_fields?.length || 0} fields mapped</td>
+                            <td className="summary-table-cell">
+                              <span className={`badge ${r.success ? 'badge-completed' : 'badge-failed'}`}>
+                                {r.success ? 'Success' : 'Failed'}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
                       </tbody>
                     </table>
                   </div>
@@ -2987,7 +3576,7 @@ export default function App() {
           </div>
         </div>
       )}
-      </div>
+
     </div>
   );
 }
