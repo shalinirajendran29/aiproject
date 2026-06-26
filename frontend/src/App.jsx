@@ -1362,40 +1362,53 @@ export default function App() {
   return (
     <div className="smartfill-plugin-root min-h-screen p-4 text-slate-700">
       {/* Brand Header */}
-      <header className="glass-panel flex flex-col md:flex-row justify-between items-center gap-4 mb-4" style={{ padding: '12px 20px' }}>
-        <div className="flex items-center gap-3">
+      <header className="glass-panel flex flex-col md:flex-row justify-between items-center gap-4 mb-4" style={{ padding: '14px 20px', borderLeft: '4px solid var(--accent-color)' }}>
+        <div className="flex items-center gap-4">
           {/* Unitive Logo Mark */}
-          <svg className="h-8 w-8" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M30 20 C20 40 20 70 50 85 C80 70 80 40 70 20 C70 20 80 45 68 65 C58 80 42 80 32 65 C20 45 30 20 30 20 Z" fill="url(#unitiveGradHeader)" />
-            <defs>
-              <linearGradient id="unitiveGradHeader" x1="0%" y1="0%" x2="100%" y2="100%">
-                <stop offset="0%" stopColor="#d946ef" />
-                <stop offset="40%" stopColor="#ec4899" />
-                <stop offset="70%" stopColor="#f97316" />
-                <stop offset="100%" stopColor="#eab308" />
-              </linearGradient>
-            </defs>
-          </svg>
-          {/* Unitive Text Logo */}
-          <div className="flex items-center gap-[5px] font-sans font-bold text-xl tracking-wider">
-            <span className="text-slate-800 font-black">UNITIV</span>
-            <span className="flex flex-col gap-[3px] justify-center h-4 w-3.5" style={{ transform: 'translateY(1px)' }}>
-              <span className="h-[2.5px] bg-orange-500 rounded-full w-full"></span>
-              <span className="h-[2.5px] bg-orange-500 rounded-full w-full"></span>
-              <span className="h-[2.5px] bg-orange-500 rounded-full w-full"></span>
+          <div className="flex items-center justify-center bg-white p-1.5 rounded border border-slate-200 shadow-sm" style={{ width: '48px', height: '48px', flexShrink: 0 }}>
+            <svg width="34" height="34" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+              {/* Left Side of U (Magenta) */}
+              <path d="M 30,22 C 20,38 20,68 50,82" stroke="url(#unitiveMagentaHeader)" strokeWidth="11" strokeLinecap="round" />
+              {/* Right Side of U (Orange) */}
+              <path d="M 70,22 C 80,38 80,68 50,82" stroke="url(#unitiveOrangeHeader)" strokeWidth="11" strokeLinecap="round" />
+              <defs>
+                <linearGradient id="unitiveMagentaHeader" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stopColor="#d946ef" />
+                  <stop offset="100%" stopColor="#ec4899" />
+                </linearGradient>
+                <linearGradient id="unitiveOrangeHeader" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stopColor="#ff6b00" />
+                  <stop offset="100%" stopColor="#ea580c" />
+                </linearGradient>
+              </defs>
+            </svg>
+          </div>
+          
+          {/* Logo Text & Tagline */}
+          <div className="flex flex-col">
+            <div className="flex items-center gap-1.5">
+              <span className="text-xl font-bold text-slate-800 tracking-wider" style={{ fontFamily: "'Poppins', sans-serif", fontWeight: 800 }}>UNITIV</span>
+              {/* Custom styled E with three bars */}
+              <div className="flex flex-col gap-[3px] justify-center h-3.5 w-3" style={{ transform: 'translateY(0.5px)' }}>
+                <div className="h-[2px] bg-[#ff6b00] rounded-full w-full"></div>
+                <div className="h-[2px] bg-[#ff6b00] rounded-full w-full"></div>
+                <div className="h-[2px] bg-[#ff6b00] rounded-full w-full"></div>
+              </div>
+              <span className="text-[9px] font-mono font-bold bg-orange-500/10 text-orange-600 px-2 py-0.5 rounded border border-orange-500/20 uppercase tracking-widest ml-2">
+                AUTOMATION WIDGET
+              </span>
+            </div>
+            <span className="text-[10px] text-slate-500 font-medium tracking-tight mt-0.5">
+              Intelligent Form Fill and Document Verification Platform
             </span>
           </div>
-          {/* Platform Label */}
-          <span className="text-[9px] font-mono font-bold bg-slate-100 text-slate-500 px-2 py-0.5 rounded border border-slate-200 uppercase tracking-widest ml-2">
-            INTELLIGENT FORM FILL WIDGET
-          </span>
         </div>
 
-        {/* Short info */}
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1.5 text-xs text-slate-500 font-mono">
+        {/* System Session Status */}
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-1.5 text-xs text-emerald-600 font-mono bg-emerald-500/5 px-3 py-1.5 rounded border border-emerald-500/10">
             <span className="led led-green led-pulse" style={{ width: '6px', height: '6px' }}></span>
-            <span>SECURE LINK ESTABLISHED</span>
+            <span>SECURE SYSTEM LINK ESTABLISHED</span>
           </div>
         </div>
       </header>
@@ -1406,7 +1419,7 @@ export default function App() {
           <span className="telemetry-label">SYSTEM CORE</span>
           <div className="telemetry-value">
             <span className={`led led-green led-pulse`}></span>
-            <span>SMARTFILL_AI // ACTIVE</span>
+            <span>UNITIVE_AI // ACTIVE</span>
           </div>
         </div>
         
