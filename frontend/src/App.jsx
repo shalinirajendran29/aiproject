@@ -1362,43 +1362,32 @@ export default function App() {
   return (
     <div className="smartfill-plugin-root min-h-screen p-4 text-slate-700">
       {/* Brand Header */}
-      <header className="glass-panel flex flex-col md:flex-row justify-between items-center gap-4 mb-4" style={{ padding: '14px 20px', borderLeft: '4px solid var(--accent-color)' }}>
+      <header className="glass-panel flex flex-col md:flex-row justify-between items-center gap-4 mb-4" style={{ padding: '12px 20px', borderLeft: '4px solid var(--accent-color)' }}>
         <div className="flex items-center gap-4">
-          {/* Unitive Logo Mark */}
-          <div className="flex items-center justify-center bg-white p-1.5 rounded border border-slate-200 shadow-sm" style={{ width: '48px', height: '48px', flexShrink: 0 }}>
-            <svg width="34" height="34" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
-              {/* Left Side of U (Magenta) */}
-              <path d="M 30,22 C 20,38 20,68 50,82" stroke="url(#unitiveMagentaHeader)" strokeWidth="11" strokeLinecap="round" />
-              {/* Right Side of U (Orange) */}
-              <path d="M 70,22 C 80,38 80,68 50,82" stroke="url(#unitiveOrangeHeader)" strokeWidth="11" strokeLinecap="round" />
-              <defs>
-                <linearGradient id="unitiveMagentaHeader" x1="0%" y1="0%" x2="100%" y2="100%">
-                  <stop offset="0%" stopColor="#d946ef" />
-                  <stop offset="100%" stopColor="#ec4899" />
-                </linearGradient>
-                <linearGradient id="unitiveOrangeHeader" x1="0%" y1="0%" x2="100%" y2="100%">
-                  <stop offset="0%" stopColor="#ff6b00" />
-                  <stop offset="100%" stopColor="#ea580c" />
-                </linearGradient>
-              </defs>
-            </svg>
+          {/* Unitive Official Logo Image */}
+          <div className="flex items-center justify-center bg-white p-1 rounded border border-slate-200 shadow-sm" style={{ flexShrink: 0 }}>
+            <img 
+              src="https://unitive.in/assets/images/logo/9.png" 
+              alt="Unitive Technologies Logo" 
+              className="h-10 object-contain"
+              onError={(e) => {
+                // fallback hide if network error
+                e.target.style.display = 'none';
+              }}
+            />
           </div>
           
-          {/* Logo Text & Tagline */}
+          {/* Title & Tagline */}
           <div className="flex flex-col">
-            <div className="flex items-center gap-1.5">
-              <span className="text-xl font-bold text-slate-800 tracking-wider" style={{ fontFamily: "'Poppins', sans-serif", fontWeight: 800 }}>UNITIV</span>
-              {/* Custom styled E with three bars */}
-              <div className="flex flex-col gap-[3px] justify-center h-3.5 w-3" style={{ transform: 'translateY(0.5px)' }}>
-                <div className="h-[2px] bg-[#ff6b00] rounded-full w-full"></div>
-                <div className="h-[2px] bg-[#ff6b00] rounded-full w-full"></div>
-                <div className="h-[2px] bg-[#ff6b00] rounded-full w-full"></div>
-              </div>
-              <span className="text-[9px] font-mono font-bold bg-orange-500/10 text-orange-600 px-2 py-0.5 rounded border border-orange-500/20 uppercase tracking-widest ml-2">
-                AUTOMATION WIDGET
+            <div className="flex items-center gap-2">
+              <h1 className="text-lg font-bold text-slate-800 tracking-wide m-0" style={{ fontFamily: "'Poppins', sans-serif" }}>
+                Unitive Technologies
+              </h1>
+              <span className="text-[9px] font-mono font-bold bg-orange-500/10 text-orange-600 px-2 py-0.5 rounded border border-orange-500/20 uppercase tracking-wider">
+                FORM AUTOMATION PLATFORM
               </span>
             </div>
-            <span className="text-[10px] text-slate-500 font-medium tracking-tight mt-0.5">
+            <span className="text-[10px] text-slate-500 font-medium mt-0.5">
               Intelligent Form Fill and Document Verification Platform
             </span>
           </div>
