@@ -1360,7 +1360,46 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen p-4 text-slate-300">
+    <div className="smartfill-plugin-root min-h-screen p-4 text-slate-700">
+      {/* Brand Header */}
+      <header className="glass-panel flex flex-col md:flex-row justify-between items-center gap-4 mb-4" style={{ padding: '12px 20px' }}>
+        <div className="flex items-center gap-3">
+          {/* Unitive Logo Mark */}
+          <svg className="h-8 w-8" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M30 20 C20 40 20 70 50 85 C80 70 80 40 70 20 C70 20 80 45 68 65 C58 80 42 80 32 65 C20 45 30 20 30 20 Z" fill="url(#unitiveGradHeader)" />
+            <defs>
+              <linearGradient id="unitiveGradHeader" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stopColor="#d946ef" />
+                <stop offset="40%" stopColor="#ec4899" />
+                <stop offset="70%" stopColor="#f97316" />
+                <stop offset="100%" stopColor="#eab308" />
+              </linearGradient>
+            </defs>
+          </svg>
+          {/* Unitive Text Logo */}
+          <div className="flex items-center gap-[5px] font-sans font-bold text-xl tracking-wider">
+            <span className="text-slate-800 font-black">UNITIV</span>
+            <span className="flex flex-col gap-[3px] justify-center h-4 w-3.5" style={{ transform: 'translateY(1px)' }}>
+              <span className="h-[2.5px] bg-orange-500 rounded-full w-full"></span>
+              <span className="h-[2.5px] bg-orange-500 rounded-full w-full"></span>
+              <span className="h-[2.5px] bg-orange-500 rounded-full w-full"></span>
+            </span>
+          </div>
+          {/* Platform Label */}
+          <span className="text-[9px] font-mono font-bold bg-slate-100 text-slate-500 px-2 py-0.5 rounded border border-slate-200 uppercase tracking-widest ml-2">
+            INTELLIGENT FORM FILL WIDGET
+          </span>
+        </div>
+
+        {/* Short info */}
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1.5 text-xs text-slate-500 font-mono">
+            <span className="led led-green led-pulse" style={{ width: '6px', height: '6px' }}></span>
+            <span>SECURE LINK ESTABLISHED</span>
+          </div>
+        </div>
+      </header>
+
       {/* Top Telemetry HUD Bar */}
       <header className="telemetry-bar">
         <div className="telemetry-item" style={{ borderRight: '1px solid var(--border-color)' }}>
