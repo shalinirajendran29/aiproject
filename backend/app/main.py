@@ -29,6 +29,7 @@ from fastapi.responses import JSONResponse
 import time
 from collections import defaultdict
 from .routers.admin import append_admin_log, load_admin_data
+from .services.cache_service import cache_service
 
 # Simple sliding window rate limiter in memory (IP -> list of timestamps)
 IP_REQUESTS = defaultdict(list)
@@ -57,28 +58,72 @@ async def rate_limiting_middleware(request: Request, call_next):
                 key_hash = hashlib.sha256(raw_key.strip().encode()).hexdigest()
                 
                 try:
-                    data = load_admin_data()
-                    matched_key = None
-                    for k in data.get("keys", []):
-                        if k.get("hashed_key") == key_hash and k.get("status") == "active":
-                            matched_key = k
-                            break
-                    if matched_key:
-                        workspace_name = matched_key.get("workspace", "Default Workspace")
-                        permissions_role = matched_key.get("role", "Developer")
-                        api_key_prefix = matched_key.get("prefix", "uni_live...")
-                        user_name = matched_key.get("name", "Operator")
-                        plan_name = "Enterprise Plan" if permissions_role == "Admin" else "Standard Plan"
+                    cache_key = f"apikey:hash:{key_hash}"
+                    cached_key_info = cache_service.get(cache_key)
+                    
+                    if cached_key_info:
+                        if cached_key_info.get("status") == "active":
+                            workspace_name = cached_key_info.get("workspace")
+                            permissions_role = cached_key_info.get("role")
+                            api_key_prefix = cached_key_info.get("prefix")
+                            user_name = cached_key_info.get("name")
+                            plan_name = cached_key_info.get("plan")
+                        else:
+                            return JSONResponse(
+                                status_code=401,
+                                content={"detail": "Unauthorized. Invalid or revoked API Key."},
+                            )
                     else:
-                        append_admin_log("auth", "WARNING", f"Access Denied: Invalid or revoked API Key supplied to '{request.url.path}'.")
-                        return JSONResponse(
-                            status_code=401,
-                            content={"detail": "Unauthorized. Invalid or revoked API Key."},
-                        )
+                        data = load_admin_data()
+                        matched_key = None
+                        for k in data.get("keys", []):
+                            if k.get("hashed_key") == key_hash and k.get("status") == "active":
+                                matched_key = k
+                                break
+                        if matched_key:
+                            workspace_name = matched_key.get("workspace", "Default Workspace")
+                            permissions_role = matched_key.get("role", "Developer")
+                            api_key_prefix = matched_key.get("prefix", "uni_live...")
+                            user_name = matched_key.get("name", "Operator")
+                            plan_name = "Enterprise Plan" if permissions_role == "Admin" else "Standard Plan"
+                            
+                            # Build permissions list (Point 2)
+                            permissions_list = ["read"]
+                            if permissions_role in ["Admin", "Developer"]:
+                                permissions_list.extend(["write", "delete"])
+                            if permissions_role == "Admin":
+                                permissions_list.append("admin")
+                                
+                            # Fetch rate limit setting to store in key cache (Point 2)
+                            admin_settings = data.get("settings", {})
+                            key_limit = admin_settings.get("rate_limit_api_key", 100)
+                            
+                            # Cache the successful key validation with 10 min TTL (Point 2)
+                            key_info = {
+                                "status": "active",
+                                "hash": key_hash,
+                                "workspace": workspace_name,
+                                "workspace_id": "ws_" + workspace_name.lower().replace(" ", "_"),
+                                "role": permissions_role,
+                                "prefix": api_key_prefix,
+                                "name": user_name,
+                                "plan": plan_name,
+                                "permissions": permissions_list,
+                                "rate_limit_bucket": key_limit
+                            }
+                            cache_service.set(cache_key, key_info, expire_seconds=600)
+                        else:
+                            # Cache negative validation (5 min TTL) to avoid DB flood
+                            cache_service.set(cache_key, {"status": "revoked"}, expire_seconds=300)
+                            append_admin_log("auth", "WARNING", f"Access Denied: Invalid or revoked API Key supplied to '{request.url.path}'.")
+                            return JSONResponse(
+                                status_code=401,
+                                content={"detail": "Unauthorized. Invalid or revoked API Key."},
+                            )
                 except Exception as e:
                     print(f"Failed to lookup API key: {e}")
             
-            # 2. Layered Rate Limiter: Per-IP or Per-API-Key
+            # 2. Layered Rate Limiter: Per-IP or Per-API-Key (Point 12)
             try:
                 admin_settings = load_admin_data()["settings"]
                 ip_limit = admin_settings.get("rate_limit_ip", 30)
@@ -88,32 +133,30 @@ async def rate_limiting_middleware(request: Request, call_next):
                 key_limit = 100
                 
             client_ip = request.client.host or "127.0.0.1"
-            current_time = time.time()
             
             # Layered Rate Limit Enforcement
             if api_key_header and api_key_prefix != "Unauthenticated":
-                # Limit per API Key
-                key_identifier = f"key_{api_key_prefix}"
-                IP_REQUESTS[key_identifier] = [t for t in IP_REQUESTS[key_identifier] if current_time - t < 60]
-                if len(IP_REQUESTS[key_identifier]) >= key_limit:
+                # Limit per API Key (Point 12)
+                key_cache_limit_key = f"apikey:requests:minute:{api_key_prefix}"
+                current_requests = cache_service.incr_rate_limit(key_cache_limit_key, window_seconds=60)
+                if current_requests > key_limit:
                     append_admin_log("ratelimit", "WARNING", f"Rate limit 429 triggered for API Key '{api_key_prefix}' (Limit: {key_limit} req/min). User: '{user_name}', Workspace: '{workspace_name}'")
                     return JSONResponse(
                         status_code=429,
                         content={"detail": "Too Many Requests. API Key rate limit exceeded. Please retry later."},
                         headers={"Retry-After": "18"}
                     )
-                IP_REQUESTS[key_identifier].append(current_time)
             else:
-                # Limit per IP
-                IP_REQUESTS[client_ip] = [t for t in IP_REQUESTS[client_ip] if current_time - t < 60]
-                if len(IP_REQUESTS[client_ip]) >= ip_limit:
+                # Limit per IP (Point 12)
+                ip_cache_limit_key = f"ip:requests:minute:{client_ip}"
+                current_requests = cache_service.incr_rate_limit(ip_cache_limit_key, window_seconds=60)
+                if current_requests > ip_limit:
                     append_admin_log("ratelimit", "WARNING", f"Rate limit 429 triggered for IP '{client_ip}' (Limit: {ip_limit} req/min).")
                     return JSONResponse(
                         status_code=429,
                         content={"detail": "Too Many Requests. IP rate limit exceeded. Please retry later."},
                         headers={"Retry-After": "18"}
                     )
-                IP_REQUESTS[client_ip].append(current_time)
                 
             # Log write/delete requests in administrative audit logs
             if request.method in ["POST", "DELETE"]:

@@ -1641,6 +1641,33 @@ export default function App() {
                 </div>
               </div>
             </div>
+
+            {/* Cache Telemetry Section */}
+            <div className="border border-slate-200 rounded p-3 bg-slate-50 flex flex-col gap-2">
+              <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">Enterprise Cache Telemetry HUD</span>
+              <div className="grid grid-cols-2 gap-2 text-[10px] font-mono">
+                <div className="flex justify-between items-center p-1.5 bg-white border border-slate-150 rounded col-span-2">
+                  <span className="text-pink-600 font-semibold">Cache engine Mode:</span>
+                  <span className="font-bold text-slate-800">{adminMetrics.cache_service_status || 'Verifying connection...'}</span>
+                </div>
+                <div className="flex justify-between items-center p-1.5 bg-white border border-slate-150 rounded">
+                  <span className="text-slate-600 font-semibold">Settings Cache TTL:</span>
+                  <span className="font-bold text-indigo-600">10 Min Cache (Active)</span>
+                </div>
+                <div className="flex justify-between items-center p-1.5 bg-white border border-slate-150 rounded">
+                  <span className="text-slate-600 font-semibold">API Key Cache TTL:</span>
+                  <span className="font-bold text-indigo-600">10 Min Cache (Active)</span>
+                </div>
+                <div className="flex justify-between items-center p-1.5 bg-white border border-slate-150 rounded">
+                  <span className="text-slate-600 font-semibold">OCR Results Cache TTL:</span>
+                  <span className="font-bold text-indigo-600">24 Hr Cache (Active)</span>
+                </div>
+                <div className="flex justify-between items-center p-1.5 bg-white border border-slate-150 rounded">
+                  <span className="text-slate-600 font-semibold">AI Extracted Cache TTL:</span>
+                  <span className="font-bold text-indigo-600">7 Day Cache (Active)</span>
+                </div>
+              </div>
+            </div>
           </div>
         )}
 

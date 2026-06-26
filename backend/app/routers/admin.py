@@ -65,7 +65,14 @@ DEFAULT_KEYS = [
   }
 ]
 
+from ..services.cache_service import cache_service
+
 def load_admin_data() -> Dict[str, Any]:
+    # Check cache first (Point 1)
+    cached = cache_service.get("workspace:default_workspace:settings")
+    if cached:
+        return cached
+
     os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
     if not os.path.exists(DATA_FILE):
         data = {
@@ -75,6 +82,10 @@ def load_admin_data() -> Dict[str, Any]:
         }
         with open(DATA_FILE, "w") as f:
             json.dump(data, f, indent=2)
+        # Cache workspace settings (Point 1) and config security settings (Point 10)
+        cache_service.set("workspace:default_workspace:settings", data, expire_seconds=600)
+        cache_service.set("config:allowed_extensions", DEFAULT_SETTINGS.get("allowed_extensions", []), expire_seconds=600)
+        cache_service.set("config:virus_scan_settings", DEFAULT_SETTINGS.get("virus_scanning_enabled", True), expire_seconds=600)
         return data
     try:
         with open(DATA_FILE, "r") as f:
@@ -83,14 +94,23 @@ def load_admin_data() -> Dict[str, Any]:
                 data["keys"] = DEFAULT_KEYS
                 with open(DATA_FILE, "w") as f:
                     json.dump(data, f, indent=2)
+            # Cache workspace settings (Point 1) and config security settings (Point 10)
+            cache_service.set("workspace:default_workspace:settings", data, expire_seconds=600)
+            cache_service.set("config:allowed_extensions", data["settings"].get("allowed_extensions", []), expire_seconds=600)
+            cache_service.set("config:virus_scan_settings", data["settings"].get("virus_scanning_enabled", True), expire_seconds=600)
             return data
     except Exception:
-        return {"settings": DEFAULT_SETTINGS, "logs": DEFAULT_LOGS, "keys": DEFAULT_KEYS}
+        fallback = {"settings": DEFAULT_SETTINGS, "logs": DEFAULT_LOGS, "keys": DEFAULT_KEYS}
+        return fallback
 
 def save_admin_data(data: Dict[str, Any]):
     os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
     with open(DATA_FILE, "w") as f:
         json.dump(data, f, indent=2)
+    # Invalidate caches (Point 1 & 10)
+    cache_service.delete("workspace:default_workspace:settings")
+    cache_service.delete("config:allowed_extensions")
+    cache_service.delete("config:virus_scan_settings")
 
 def append_admin_log(event_type: str, level: str, message: str):
     try:
@@ -166,6 +186,11 @@ def clear_logs():
 
 @router.get("/metrics")
 def get_metrics(db: Session = Depends(get_db)):
+    # 1. Dashboard Metrics Cache (30-60 sec TTL)
+    cached_metrics = cache_service.get("metrics:dashboard")
+    if cached_metrics:
+        return cached_metrics
+
     data = load_admin_data()
     logs_list = data.get("logs", [])
     
@@ -175,8 +200,9 @@ def get_metrics(db: Session = Depends(get_db)):
     failed_docs = db.query(DBModelDocument).filter(DBModelDocument.status == "failed").count()
     processing_docs = db.query(DBModelDocument).filter(DBModelDocument.status == "processing").count()
     
-    # Calculate success rate
+    # Calculate success and error rates
     success_rate = (completed_docs / total_docs * 100) if total_docs > 0 else 100.0
+    error_rate = (failed_docs / total_docs * 100) if total_docs > 0 else 0.0
     
     # Scan logs for specific triggers
     prompt_injection_attempts = sum(1 for log in logs_list if log.get("event_type") == "injection" or "injection" in log.get("message", "").lower())
@@ -184,16 +210,49 @@ def get_metrics(db: Session = Depends(get_db)):
     rate_limit_triggers = sum(1 for log in logs_list if "rate limit" in log.get("message", "").lower() or "429" in log.get("message", "").lower())
     duplicate_hits = sum(1 for log in logs_list if "duplicate" in log.get("message", "").lower())
     
-    # Cost calculations (Gemini-2.5-flash averages ~$0.000075 per 1K input tokens + $0.0003 output)
-    # Estimate average cost of $0.002 per completed LLM document extraction
-    estimated_cost = round(completed_docs * 0.002, 4)
+    # 2. Cost Cache (5 min TTL) - Update or compute Today's, Monthly, and Workspace costs
+    workspace_id = "default_workspace"
+    cost_cache_key = f"cost:metrics:{workspace_id}"
+    cached_cost = cache_service.get(cost_cache_key)
+    if not cached_cost:
+        from datetime import datetime, date
+        today_start = datetime.combine(date.today(), datetime.min.time())
+        month_start = datetime(date.today().year, date.today().month, 1)
+        
+        # Query DB for counts
+        today_docs = db.query(DBModelDocument).filter(DBModelDocument.created_at >= today_start, DBModelDocument.status == "completed").count()
+        monthly_docs = db.query(DBModelDocument).filter(DBModelDocument.created_at >= month_start, DBModelDocument.status == "completed").count()
+        
+        today_cost = round(today_docs * 0.002, 4)
+        monthly_cost = round(monthly_docs * 0.002, 4)
+        workspace_cost = round(completed_docs * 0.002, 4)
+        
+        cached_cost = {
+            "today_cost": today_cost,
+            "monthly_cost": monthly_cost,
+            "workspace_cost": workspace_cost
+        }
+        cache_service.set(cost_cache_key, cached_cost, expire_seconds=300) # 5 min TTL
+        
+    # 3. Active Users (Mock active user sessions count cached in Redis)
+    active_users_cache_key = "session:active_users_count"
+    active_users = cache_service.get(active_users_cache_key)
+    if active_users is None:
+        active_users = 3 # fallback mock active users
+        cache_service.set(active_users_cache_key, active_users, expire_seconds=60) # 60 sec TTL
+        
+    # Calculate daily requests count in the last 24h
+    from datetime import datetime, timedelta
+    day_ago = datetime.utcnow() - timedelta(days=1)
+    daily_requests = db.query(DBModelDocument).filter(DBModelDocument.created_at >= day_ago).count()
     
-    return {
+    res = {
         "total_documents": total_docs,
         "completed": completed_docs,
         "failed": failed_docs,
         "processing": processing_docs,
         "success_rate_percent": round(success_rate, 2),
+        "error_rate_percent": round(error_rate, 2),
         "avg_ocr_latency_sec": 4.15,
         "avg_llm_latency_sec": 1.68,
         "quarantined_files_blocked": quarantine_blocks,
@@ -201,9 +260,18 @@ def get_metrics(db: Session = Depends(get_db)):
         "rate_limit_429_count": rate_limit_triggers,
         "duplicate_cache_hits": duplicate_hits,
         "total_tokens_consumed": completed_docs * 1450, # estimate 1450 tokens average per document
-        "estimated_api_cost_usd": estimated_cost,
-        "active_queue_workers": 2 if processing_docs > 0 else 0
+        "estimated_api_cost_usd": cached_cost["workspace_cost"],
+        "today_cost_usd": cached_cost["today_cost"],
+        "monthly_cost_usd": cached_cost["monthly_cost"],
+        "daily_requests": daily_requests,
+        "active_users": active_users,
+        "active_queue_workers": 2 if processing_docs > 0 else 0,
+        "cache_service_status": "Redis Connection (Active)" if cache_service.use_redis else "InMemory TTL Cache (Simulated)",
+        "cached_keys_count": len(data.get("keys", []))
     }
+    
+    cache_service.set("metrics:dashboard", res, expire_seconds=30)
+    return res
 
 class KeyCreateRequest(BaseModel):
     workspace: str
@@ -272,6 +340,11 @@ def rotate_key(req: KeyRotateRequest):
     if not found:
         raise HTTPException(status_code=404, detail="API Key not found")
         
+    # Get the old hash to invalidate it from cache
+    old_hash = found.get("hashed_key")
+    if old_hash:
+        cache_service.delete(f"apikey:hash:{old_hash}")
+        
     raw_key = "uni_live_" + secrets.token_hex(16)
     hashed = hashlib.sha256(raw_key.encode()).hexdigest()
     
@@ -309,6 +382,11 @@ def revoke_key(req: KeyRevokeRequest):
     if not found:
         raise HTTPException(status_code=404, detail="API Key not found")
         
+    # Get the hash to invalidate it from cache
+    old_hash = found.get("hashed_key")
+    if old_hash:
+        cache_service.delete(f"apikey:hash:{old_hash}")
+        
     found["status"] = "revoked"
     save_admin_data(data)
     append_admin_log("auth", "WARNING", f"Revoked API Key ({found['prefix']}) for workspace '{found['workspace']}'.")
@@ -319,6 +397,16 @@ def delete_key(req: KeyRevokeRequest):
     data = load_admin_data()
     keys = data.get("keys", [])
     
+    # Locate the key to delete its cache entry
+    target_hash = None
+    for k in keys:
+        if k["key_id"] == req.key_id:
+            target_hash = k.get("hashed_key")
+            break
+            
+    if target_hash:
+        cache_service.delete(f"apikey:hash:{target_hash}")
+        
     new_keys = [k for k in keys if k["key_id"] != req.key_id]
     if len(new_keys) == len(keys):
          raise HTTPException(status_code=404, detail="API Key not found")
@@ -327,3 +415,78 @@ def delete_key(req: KeyRevokeRequest):
     save_admin_data(data)
     append_admin_log("auth", "INFO", f"Deleted API Key {req.key_id} from configurations.")
     return {"message": f"Key {req.key_id} deleted"}
+
+# --- Supported Models Metadata (Point 9) ---
+@router.get("/models")
+def get_models_metadata():
+    cache_key = "config:models"
+    cached = cache_service.get(cache_key)
+    if cached:
+        return cached
+        
+    models_metadata = [
+        {
+            "model_name": "gemini-2.5-flash",
+            "pricing_input_1k": 0.000075,
+            "pricing_output_1k": 0.0003,
+            "token_limit": 1048576,
+            "capabilities": ["ocr", "structured_extraction", "json_format"]
+        },
+        {
+            "model_name": "ollama/phi3",
+            "pricing_input_1k": 0.0,
+            "pricing_output_1k": 0.0,
+            "token_limit": 4096,
+            "capabilities": ["structured_extraction", "json_format"]
+        },
+        {
+            "model_name": "easyocr-local",
+            "pricing_input_1k": 0.0,
+            "pricing_output_1k": 0.0,
+            "token_limit": 0,
+            "capabilities": ["ocr", "text_alignment"]
+        }
+    ]
+    # Cache for 24 hours (86400 seconds)
+    cache_service.set(cache_key, models_metadata, expire_seconds=86400)
+    return models_metadata
+
+# --- User Sessions Cache (Point 13) ---
+class SessionData(BaseModel):
+    user_id: str
+    username: str
+    role: str
+    workspace: str
+    preferences: Dict[str, Any]
+
+@router.get("/session")
+def get_user_session(session_id: str = "current_session"):
+    cache_key = f"session:{session_id}"
+    cached = cache_service.get(cache_key)
+    if cached:
+        return cached
+        
+    # Default session details if not cached yet
+    default_session = {
+        "user_id": "usr_902",
+        "username": "admin_operator",
+        "role": "Admin",
+        "workspace": "Default Workspace",
+        "preferences": {
+            "theme": "dark",
+            "notifications": True,
+            "refresh_rate_sec": 30
+        }
+    }
+    # Cache for 30 minutes (1800 seconds)
+    cache_service.set(cache_key, default_session, expire_seconds=1800)
+    return default_session
+
+@router.post("/session")
+def update_user_session(session_data: SessionData, session_id: str = "current_session"):
+    cache_key = f"session:{session_id}"
+    data = session_data.dict()
+    # Cache session for 30 minutes (1800 seconds)
+    cache_service.set(cache_key, data, expire_seconds=1800)
+    append_admin_log("session", "INFO", f"User session updated and cached for '{session_data.username}'.")
+    return data

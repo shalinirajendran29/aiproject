@@ -1,18 +1,36 @@
 import requests
 import json
 import re
+import hashlib
 from typing import Dict, Any, List, Optional
 from ..config import settings
+from .cache_service import cache_service
+
 class SLMEngine:
     def __init__(self):
         self.base_url = settings.OLLAMA_BASE_URL
         self.model = settings.OLLAMA_MODEL
         self.gemini_api_key = settings.GEMINI_API_KEY
+        
+        # Compile prompt injection neutralization pattern at startup (Rule 11)
+        self.injection_keywords = [
+            "ignore previous instructions", 
+            "ignore instructions", 
+            "output the system prompt",
+            "system prompt", 
+            "override prompt",
+            "delete database", 
+            "drop table"
+        ]
+        self.injection_regex = re.compile(
+            "|".join(re.escape(k) for k in self.injection_keywords), 
+            re.IGNORECASE
+        )
 
-    def extract_fields(self, ocr_res: Any) -> Dict[str, Any]:
+    def extract_fields(self, ocr_res: Any, file_hash: Optional[str] = None) -> Dict[str, Any]:
         """
         Uses Ollama SLM or heuristic tabular alignment to extract structured fields dynamically.
-        Falls back to rule-based parser if Ollama is unavailable.
+        Falls back to rule-based parser if Ollama is unavailable. Uses AI result caching.
         """
 
         if isinstance(ocr_res, dict):
@@ -22,45 +40,57 @@ class SLMEngine:
             ocr_text = str(ocr_res)
             words = []
             
-        # Prompt Injection Protection
+        # 1. Load active settings and prompt version (Point 5)
         from ..routers.admin import append_admin_log, load_admin_data
         admin_settings = load_admin_data()["settings"]
+        prompt_version = admin_settings.get("prompt_version", "v1")
+
+        # Determine the file identification hash for caching
+        repr_hash = file_hash or hashlib.sha256(ocr_text.encode()).hexdigest()
+        
+        # Build prompt cache lookup key SHA256(file_hash + prompt_version + model_name) (Point 5)
+        ai_cache_key = f"ai:result:{hashlib.sha256((repr_hash + prompt_version + self.model).encode()).hexdigest()}"
+        cached_ai = cache_service.get(ai_cache_key)
+        if cached_ai:
+            append_admin_log("deduplication", "INFO", f"AI Cache Hit: Restored extraction values from cache key {ai_cache_key[:16]}...")
+            return cached_ai
+            
+        # Prompt Injection Protection using pre-compiled regex (Rule 11)
         if admin_settings.get("prompt_injection_protection", True):
-            injection_keywords = [
-                "ignore previous instructions", 
-                "ignore instructions", 
-                "output the system prompt",
-                "system prompt", 
-                "override prompt",
-                "delete database", 
-                "drop table"
-            ]
-            found_patterns = [p for p in injection_keywords if p in ocr_text.lower()]
-            if found_patterns:
-                append_admin_log("injection", "WARNING", f"Potential prompt injection pattern detected in OCR text: {', '.join(found_patterns)}. Neutralizing...")
+            found_matches = self.injection_regex.findall(ocr_text)
+            if found_matches:
+                append_admin_log("injection", "WARNING", f"Potential prompt injection pattern detected: {', '.join(set(found_matches))}. Neutralizing...")
                 # Neutralize by replacing the offending phrases with a warning block
-                for pattern in found_patterns:
-                    # Case insensitive replace
-                    pattern_re = re.compile(re.escape(pattern), re.IGNORECASE)
-                    ocr_text = pattern_re.sub("[RESTRICTED SECURE VALUE BLOCKED]", ocr_text)
+                ocr_text = self.injection_regex.sub("[RESTRICTED SECURE VALUE BLOCKED]", ocr_text)
             
         # Try heuristic table extraction first if words are present
         if words:
             table_data = self._extract_table_records(words, ocr_text)
             if table_data and "records" in table_data and len(table_data["records"]) > 0:
                 print(f"Table ingestion active: Extracted {len(table_data['records'])} rows.")
+                # Cache table heuristic result for 30 days
+                cache_service.set(ai_cache_key, table_data, expire_seconds=30 * 86400)
                 return table_data
 
-
-        prompt = (
-            "You are an AI document parser. Analyze the OCR text below and dynamically identify all labeled fields/attributes and their corresponding values.\n"
+        # --- Prompt Cache (Point 3) ---
+        default_system = "You are an AI document parser. Analyze the OCR text below and dynamically identify all labeled fields/attributes and their corresponding values."
+        default_extraction = (
             "Identify and extract all keys such as customer/full name, mobile number, address, country, state, district, pin/zip code, PAN number, GSTIN number, company name, website, invoice number, invoice date, total amount, vendor name, item description, gross weight, net weight, purity, making charges, wastage, rate per gram, stone weight, quantity, unit price, discount, hsn/sac code, shipping charges, sku/item code, patient name, doctor name, admission date, discharge date, room number, medicine cost, insurance provider, pnr/booking id, journey date, source location, destination location, seat number, vehicle number, etc.\n"
             "If components of an address (like state, district, or pin_code) are mentioned or embedded, please extract them into separate fields ('state', 'district', 'pin_code') instead of merging them into other unrelated fields.\n"
             "Return the extracted details strictly as a single flat JSON object where the keys are the field names in lowercase snake_case (e.g. 'full_name', 'mobile_number', 'address', 'country', 'state', 'district', 'pin_code', 'pan_no', 'gstin_no', 'invoice_number', 'invoice_date', 'total_amount', 'vendor_name', 'gross_weight', 'net_weight', 'purity', 'making_charges', 'wastage', 'rate_per_gram', 'stone_weight', 'item_description', 'quantity', 'unit_price', 'discount', 'hsn_code', 'shipping_charges', 'sku_code', 'patient_name', 'doctor_name', 'admission_date', 'discharge_date', 'room_number', 'medicine_cost', 'insurance_provider', 'pnr_no', 'journey_date', 'source_location', 'destination_location', 'seat_number', 'vehicle_no') and the values are their extracted strings. "
-            "Do not include any explanation or conversational text. Output only the JSON.\n\n"
-            f"OCR Text:\n{ocr_text}"
-
+            "Do not include any explanation or conversational text. Output only the JSON."
         )
+        
+        system_prompt = cache_service.get_prompt("system", default_system)
+        extraction_prompt = cache_service.get_prompt("extraction", default_extraction)
+        
+        prompt = (
+            f"{system_prompt}\n"
+            f"{extraction_prompt}\n\n"
+            f"OCR Text:\n{ocr_text}"
+        )
+        
+        result_data = None
         
         # Check if Google Gemini API key is configured
         if self.gemini_api_key:
@@ -81,33 +111,39 @@ class SLMEngine:
                     res_json = response.json()
                     result_text = res_json["candidates"][0]["content"]["parts"][0]["text"]
                     data = json.loads(result_text)
-                    return self._post_process_data(data, ocr_text)
+                    result_data = self._post_process_data(data, ocr_text)
                 else:
                     print(f"Gemini API returned status code {response.status_code}. Falling back to Ollama.")
             except Exception as gemini_err:
                 print(f"Gemini API call failed ({gemini_err}). Falling back to Ollama.")
 
-        payload = {
-            "model": self.model,
-            "prompt": prompt,
-            "format": "json",  # Forces Ollama to output valid JSON
-            "stream": False
-        }
-        
-        try:
-            response = requests.post(
-                f"{self.base_url}/api/generate",
-                json=payload,
-                timeout=30
-            )
-            if response.status_code == 200:
-                result_json = response.json().get("response", "{}")
-                data = json.loads(result_json)
-                return self._post_process_data(data, ocr_text)
-        except Exception as e:
-            print(f"Ollama SLM inference failed ({e}). Falling back to rule-based heuristics.")
+        if not result_data:
+            payload = {
+                "model": self.model,
+                "prompt": prompt,
+                "format": "json",  # Forces Ollama to output valid JSON
+                "stream": False
+            }
             
-        return self._post_process_data(self._regex_fallback_extract(ocr_text), ocr_text)
+            try:
+                response = requests.post(
+                    f"{self.base_url}/api/generate",
+                    json=payload,
+                    timeout=30
+                )
+                if response.status_code == 200:
+                    result_json = response.json().get("response", "{}")
+                    data = json.loads(result_json)
+                    result_data = self._post_process_data(data, ocr_text)
+            except Exception as e:
+                print(f"Ollama SLM inference failed ({e}). Falling back to rule-based heuristics.")
+                
+        if not result_data:
+            result_data = self._post_process_data(self._regex_fallback_extract(ocr_text), ocr_text)
+
+        # Cache the successfully post-processed data (30 days TTL) (Point 5)
+        cache_service.set(ai_cache_key, result_data, expire_seconds=30 * 86400)
+        return result_data
 
     def _regex_fallback_extract(self, text: str) -> Dict[str, Any]:
         """

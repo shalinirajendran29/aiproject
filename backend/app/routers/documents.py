@@ -1,5 +1,6 @@
 import os
 import shutil
+import hashlib
 from fastapi import APIRouter, Depends, UploadFile, File, BackgroundTasks, HTTPException
 from sqlalchemy.orm import Session
 from typing import Dict, Any, List
@@ -11,6 +12,7 @@ from ..schemas.document import DocumentResponse, DocumentReview
 from ..services.preprocessor import ImagePreprocessor
 from ..services.ocr_engine import OCREngine
 from ..services.slm_engine import SLMEngine
+from ..services.cache_service import cache_service
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
@@ -45,6 +47,15 @@ def process_document_task(doc_id: str, db_session_maker):
         
         raw_path = doc.storage_path
         ext = os.path.splitext(raw_path.lower())[1]
+        
+        # Calculate file hash for OCR and AI caching (Rule 4, 5)
+        try:
+            with open(raw_path, "rb") as f:
+                file_bytes = f.read()
+            file_hash = hashlib.sha256(file_bytes).hexdigest()
+        except Exception as hash_err:
+            print(f"Failed to calculate file hash: {hash_err}")
+            file_hash = None
         
         # 1a. Handle Spreadsheet Ingestion
         is_excel = ext.startswith(".xls") or ext in [".ods", ".xslv", ".xlsv"]
@@ -186,20 +197,31 @@ def process_document_task(doc_id: str, db_session_maker):
             if len(pdf) > 0:
                 if len(pdf) == 1:
                     # Single-page PDF: process as a flat dictionary
-                    page = pdf[0]
-                    pil_image = page.render(scale=2).to_pil()
-                    pdf_image_filename = f"pdf_page_{doc.id}.png"
-                    pdf_image_path = os.path.join(settings.UPLOAD_DIR, pdf_image_filename)
-                    pil_image.save(pdf_image_path)
+                    # Check OCR Cache (Rule 4)
+                    ocr_cache_key = f"ocr:{file_hash}" if file_hash else None
+                    cached_ocr_res = cache_service.get(ocr_cache_key) if ocr_cache_key else None
                     
-                    doc.filename = pdf_image_filename
-                    db.commit()
+                    if cached_ocr_res:
+                        ocr_res = cached_ocr_res
+                        append_admin_log("deduplication", "INFO", f"OCR Cache Hit for single-page PDF '{doc.filename}'. Restoring cached OCR data.")
+                    else:
+                        page = pdf[0]
+                        pil_image = page.render(scale=2).to_pil()
+                        pdf_image_filename = f"pdf_page_{doc.id}.png"
+                        pdf_image_path = os.path.join(settings.UPLOAD_DIR, pdf_image_filename)
+                        pil_image.save(pdf_image_path)
+                        
+                        doc.filename = pdf_image_filename
+                        db.commit()
+                        
+                        ocr_res = ocr_engine.extract_text(pdf_image_path)
+                        if ocr_cache_key:
+                            cache_service.set(ocr_cache_key, ocr_res, expire_seconds=24 * 3600) # 24 hr TTL
                     
-                    ocr_res = ocr_engine.extract_text(pdf_image_path)
                     doc.ocr_raw_text = ocr_res["raw_text"]
                     db.commit()
                     
-                    extracted_data = slm_engine.extract_fields(ocr_res)
+                    extracted_data = slm_engine.extract_fields(ocr_res, file_hash=file_hash)
                     doc.extracted_json = extracted_data
                     
                     non_null_count = sum(1 for v in extracted_data.values() if v is not None)
@@ -209,20 +231,34 @@ def process_document_task(doc_id: str, db_session_maker):
                     records = []
                     all_raw_text = []
                     for idx in range(len(pdf)):
-                        page = pdf[idx]
-                        pil_image = page.render(scale=2).to_pil()
-                        pdf_image_filename = f"pdf_page_{doc.id}_page_{idx+1}.png"
-                        pdf_image_path = os.path.join(settings.UPLOAD_DIR, pdf_image_filename)
-                        pil_image.save(pdf_image_path)
+                        # Look up page-level OCR cache
+                        page_cache_key = f"ocr:{file_hash}_page_{idx+1}" if file_hash else None
+                        cached_page_ocr = cache_service.get(page_cache_key) if page_cache_key else None
                         
-                        if idx == 0:
-                            doc.filename = pdf_image_filename
-                            db.commit()
+                        if cached_page_ocr:
+                            ocr_res = cached_page_ocr
+                            append_admin_log("deduplication", "INFO", f"OCR Cache Hit for multi-page PDF page {idx+1} of '{doc.filename}'.")
+                        else:
+                            page = pdf[idx]
+                            pil_image = page.render(scale=2).to_pil()
+                            pdf_image_filename = f"pdf_page_{doc.id}_page_{idx+1}.png"
+                            pdf_image_path = os.path.join(settings.UPLOAD_DIR, pdf_image_filename)
+                            pil_image.save(pdf_image_path)
                             
-                        ocr_res = ocr_engine.extract_text(pdf_image_path)
+                            if idx == 0:
+                                doc.filename = pdf_image_filename
+                                db.commit()
+                                
+                            ocr_res = ocr_engine.extract_text(pdf_image_path)
+                            if page_cache_key:
+                                cache_service.set(page_cache_key, ocr_res, expire_seconds=24 * 3600)
+                                
                         all_raw_text.append(f"--- PAGE {idx+1} ---\n{ocr_res['raw_text']}")
                         
-                        extracted_page_data = slm_engine.extract_fields(ocr_res)
+                        extracted_page_data = slm_engine.extract_fields(
+                            ocr_res, 
+                            file_hash=f"{file_hash}_page_{idx+1}" if file_hash else None
+                        )
                         if "records" in extracted_page_data and isinstance(extracted_page_data["records"], list):
                             records.extend(extracted_page_data["records"])
                         else:
@@ -245,23 +281,34 @@ def process_document_task(doc_id: str, db_session_maker):
             else:
                 raise ValueError("PDF file is empty")
         else:
-            # 2. Run OpenCV Preprocessing (images only)
-            preprocessed_filename = f"processed_{os.path.basename(raw_path)}"
-            preprocessed_path = os.path.join(settings.UPLOAD_DIR, preprocessed_filename)
-            try:
-                ImagePreprocessor.preprocess(raw_path, preprocessed_path)
-                ocr_target_path = preprocessed_path
-            except Exception as preprocess_err:
-                print(f"Preprocessing warning: {preprocess_err}. Proceeding with raw file.")
-                ocr_target_path = raw_path
+            # 3. Check OCR Cache (Rule 4)
+            ocr_cache_key = f"ocr:{file_hash}" if file_hash else None
+            cached_ocr_res = cache_service.get(ocr_cache_key) if ocr_cache_key else None
             
-        # 3. OCR Extraction
-        ocr_res = ocr_engine.extract_text(ocr_target_path)
+            if cached_ocr_res:
+                ocr_res = cached_ocr_res
+                append_admin_log("deduplication", "INFO", f"OCR Cache Hit for image '{doc.filename}'. Restoring cached OCR data.")
+            else:
+                # 2. Run OpenCV Preprocessing (images only)
+                preprocessed_filename = f"processed_{os.path.basename(raw_path)}"
+                preprocessed_path = os.path.join(settings.UPLOAD_DIR, preprocessed_filename)
+                try:
+                    ImagePreprocessor.preprocess(raw_path, preprocessed_path)
+                    ocr_target_path = preprocessed_path
+                except Exception as preprocess_err:
+                    print(f"Preprocessing warning: {preprocess_err}. Proceeding with raw file.")
+                    ocr_target_path = raw_path
+                
+                # 3. OCR Extraction
+                ocr_res = ocr_engine.extract_text(ocr_target_path)
+                if ocr_cache_key:
+                    cache_service.set(ocr_cache_key, ocr_res, expire_seconds=24 * 3600) # 24 hr TTL
+            
         doc.ocr_raw_text = ocr_res["raw_text"]
         db.commit()
         
         # 4. SLM Structured Extraction
-        extracted_data = slm_engine.extract_fields(ocr_res)
+        extracted_data = slm_engine.extract_fields(ocr_res, file_hash=file_hash)
         doc.extracted_json = extracted_data
         
         # Calculate confidence score
@@ -299,10 +346,16 @@ def upload_document(
     import hashlib
     from .admin import append_admin_log, load_admin_data
 
-    # 1. Load active security settings
-    admin_settings = load_admin_data()["settings"]
+    # 1. Load active security settings from cache (Point 10)
+    allowed_exts = cache_service.get("config:allowed_extensions")
+    if allowed_exts is None:
+        admin_settings = load_admin_data()["settings"]
+        allowed_exts = admin_settings.get("allowed_extensions", ["pdf", "png", "jpeg", "jpg", "tiff"])
+        cache_service.set("config:allowed_extensions", allowed_exts, expire_seconds=600)
+    else:
+        admin_settings = load_admin_data()["settings"]
+        
     max_size_mb = admin_settings.get("max_file_size_mb", 20)
-    allowed_exts = admin_settings.get("allowed_extensions", ["pdf", "png", "jpeg", "jpg", "tiff"])
     dup_detection = admin_settings.get("duplicate_detection_sha256", True)
 
     # 2. File Upload Security: Extension validation
@@ -330,10 +383,11 @@ def upload_document(
     # Reset file read pointer
     file.file.seek(0)
     
-    # 4. Duplicate Detection via SHA-256
+    # 4. Duplicate Detection via SHA-256 (Rule 6)
     file_hash = hashlib.sha256(file_bytes).hexdigest()
-    if dup_detection and file_hash in DEDUPLICATION_CACHE:
-        cached_doc_id = DEDUPLICATION_CACHE[file_hash]
+    dup_cache_key = f"dup:hash:{file_hash}"
+    cached_doc_id = cache_service.get(dup_cache_key) if dup_detection else None
+    if cached_doc_id:
         cached_doc = db.query(DBModelDocument).filter(DBModelDocument.id == cached_doc_id).first()
         if cached_doc and cached_doc.status == "completed":
             append_admin_log("deduplication", "INFO", f"Duplicate SHA-256 match for '{filename}'. Returning cached document ID: {cached_doc_id[:8]}...")
@@ -355,8 +409,9 @@ def upload_document(
     db.commit()
     db.refresh(db_doc)
     
-    # Cache the hash for deduplication
-    DEDUPLICATION_CACHE[file_hash] = db_doc.id
+    # Cache the hash for deduplication (30 days TTL)
+    if file_hash:
+        cache_service.set(dup_cache_key, db_doc.id, expire_seconds=30 * 24 * 3600)
     
     # 5. Live logging and virus scan scheduling
     append_admin_log("security", "INFO", f"Ingested '{filename}'. Scheduling ClamAV quarantine virus scan...")
@@ -376,9 +431,31 @@ def get_all_documents(db: Session = Depends(get_db)):
 
 @router.get("/{doc_id}", response_model=DocumentResponse)
 def get_document(doc_id: str, db: Session = Depends(get_db)):
+    # Point 14: Frequently Downloaded result cache (10 min TTL)
+    doc_cache_key = f"doc:result:{doc_id}"
+    cached_doc = cache_service.get(doc_cache_key)
+    if cached_doc:
+        return cached_doc
+        
     doc = db.query(DBModelDocument).filter(DBModelDocument.id == doc_id).first()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
+        
+    doc_data = {
+        "id": doc.id,
+        "filename": doc.filename,
+        "storage_path": doc.storage_path,
+        "mime_type": doc.mime_type,
+        "status": doc.status,
+        "extracted_json": doc.extracted_json,
+        "corrected_json": doc.corrected_json,
+        "confidence_score": doc.confidence_score,
+        "ocr_raw_text": doc.ocr_raw_text,
+        "created_at": doc.created_at.isoformat() if doc.created_at else None
+    }
+    
+    if doc.status in ["completed", "failed"]:
+        cache_service.set(doc_cache_key, doc_data, expire_seconds=600)
     return doc
 
 
@@ -388,6 +465,9 @@ def delete_document(doc_id: str, db: Session = Depends(get_db)):
     doc = db.query(DBModelDocument).filter(DBModelDocument.id == doc_id).first()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
+    
+    # Invalidate document cache (Point 14)
+    cache_service.delete(f"doc:result:{doc_id}")
     
     # Try deleting physical files
     try:
@@ -431,6 +511,9 @@ def review_document(
     # 1. Update corrected values
     doc.corrected_json = review_data.corrected_json
     db.commit()
+    
+    # Invalidate cached document result (Point 14)
+    cache_service.delete(f"doc:result:{doc_id}")
     
     # 2. Learn field-to-key mapping memory
     # We compare original extracted labels with user corrected labels
