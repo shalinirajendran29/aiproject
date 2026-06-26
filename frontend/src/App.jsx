@@ -2620,10 +2620,10 @@ export default function App() {
           <div className="flex flex-col">
             <div className="flex items-center gap-2">
               <h1 className="text-lg font-bold text-slate-800 tracking-wide m-0" style={{ fontFamily: "'Poppins', sans-serif" }}>
-                Unitive Technologies
+                Unitive Form Automation
               </h1>
               <span className="text-[9px] font-mono font-bold bg-orange-500/10 text-orange-600 px-2 py-0.5 rounded border border-orange-500/20 uppercase tracking-wider">
-                FORM AUTOMATION PLATFORM
+                PROJECT KEYSTONE (v0.1.0-alpha.2)
               </span>
             </div>
             <span className="text-[10px] text-slate-500 font-medium mt-0.5">
