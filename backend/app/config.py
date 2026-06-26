@@ -2,7 +2,7 @@ import os
 from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
-    PROJECT_NAME: str = "Unitive Form Automation v0.1.0-alpha.2 — Project Keystone"
+    PROJECT_NAME: str = "Unitive Form Automation v0.1.0-alpha.3 — Project Keystone"
     API_V1_STR: str = "/api/v1"
     
     # Database

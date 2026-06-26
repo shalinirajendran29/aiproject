@@ -80,12 +80,26 @@ class SLMEngine:
                 return table_data
 
         # --- Prompt Cache (Point 3) ---
-        default_system = "You are an AI document parser. Analyze the OCR text below and dynamically identify all labeled fields/attributes and their corresponding values."
+        default_system = (
+            "You are an advanced AI document parser with high reasoning capability. "
+            "Your task is to analyze the provided OCR text and extract structured fields with extreme accuracy. "
+            "Handle complex layouts, nested tables, and multi-line values correctly. "
+            "Correct obvious OCR typos based on context (e.g. 'O' to '0' in dates or codes). "
+            "Do not hallucinate data; if a field is not present, omit it."
+        )
         default_extraction = (
-            "Identify and extract all keys such as customer/full name, mobile number, address, country, state, district, pin/zip code, PAN number, GSTIN number, company name, website, invoice number, invoice date, total amount, vendor name, item description, gross weight, net weight, purity, making charges, wastage, rate per gram, stone weight, quantity, unit price, discount, hsn/sac code, shipping charges, sku/item code, patient name, doctor name, admission date, discharge date, room number, medicine cost, insurance provider, pnr/booking id, journey date, source location, destination location, seat number, vehicle number, etc.\n"
-            "If components of an address (like state, district, or pin_code) are mentioned or embedded, please extract them into separate fields ('state', 'district', 'pin_code') instead of merging them into other unrelated fields.\n"
-            "Return the extracted details strictly as a single flat JSON object where the keys are the field names in lowercase snake_case (e.g. 'full_name', 'mobile_number', 'address', 'country', 'state', 'district', 'pin_code', 'pan_no', 'gstin_no', 'invoice_number', 'invoice_date', 'total_amount', 'vendor_name', 'gross_weight', 'net_weight', 'purity', 'making_charges', 'wastage', 'rate_per_gram', 'stone_weight', 'item_description', 'quantity', 'unit_price', 'discount', 'hsn_code', 'shipping_charges', 'sku_code', 'patient_name', 'doctor_name', 'admission_date', 'discharge_date', 'room_number', 'medicine_cost', 'insurance_provider', 'pnr_no', 'journey_date', 'source_location', 'destination_location', 'seat_number', 'vehicle_no') and the values are their extracted strings. "
-            "Do not include any explanation or conversational text. Output only the JSON."
+            "Identify and extract key entities, including but not limited to:\n"
+            "- Entities: buyer/customer full name, vendor/company name, address, country, state, district, pin_code, mobile_number, email.\n"
+            "- Tax & IDs: PAN number, GSTIN number.\n"
+            "- Invoice/Bill Details: invoice_number, invoice_date, total_amount, shipping_charges, discount.\n"
+            "- Line Items (aggregate or dominant if flat): item_description, quantity, unit_price, hsn_code.\n"
+            "- Industry Specific (if applicable): gross_weight, net_weight, purity, making_charges, wastage, rate_per_gram, stone_weight, patient_name, doctor_name, admission_date, discharge_date, room_number, medicine_cost, insurance_provider, pnr_no, journey_date, source_location, destination_location, seat_number, vehicle_no.\n\n"
+            "CRITICAL INSTRUCTIONS:\n"
+            "1. Extract nested address components into separate fields ('state', 'district', 'pin_code') rather than combining them.\n"
+            "2. For mathematical values (total amount, quantity, unit price), ensure they match the invoice logic.\n"
+            "3. Format dates cleanly if possible.\n"
+            "4. Return a SINGLE FLAT JSON object. Use strict lowercase snake_case for keys.\n"
+            "5. OUTPUT ONLY VALID JSON. Do not include markdown code blocks, thoughts, or explanations."
         )
         
         system_prompt = cache_service.get_prompt("system", default_system)
@@ -103,7 +117,7 @@ class SLMEngine:
         if self.gemini_api_key:
             print("Gemini API key detected. Initiating Gemini AI cloud extraction...")
             try:
-                url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={self.gemini_api_key}"
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key={self.gemini_api_key}"
                 payload = {
                     "contents": [{
                         "parts": [{"text": prompt}]
@@ -150,7 +164,7 @@ class SLMEngine:
 
         # Attach pipeline version metadata (Requirement 11)
         if isinstance(result_data, dict) and len(result_data) > 0:
-            model_name_used = "gemini-2.5-flash" if getattr(self, "gemini_api_key", None) else self.model
+            model_name_used = "gemini-1.5-pro" if getattr(self, "gemini_api_key", None) else self.model
             if "_pipeline_metadata" not in result_data:
                 result_data["_pipeline_metadata"] = {
                     "ocr_engine_version": "EasyOCR v3.1" if admin_settings.get("feature_flags_ocr", True) else "OCR Disabled",

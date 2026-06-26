@@ -2623,7 +2623,7 @@ export default function App() {
                 Unitive Form Automation
               </h1>
               <span className="text-[9px] font-mono font-bold bg-orange-500/10 text-orange-600 px-2 py-0.5 rounded border border-orange-500/20 uppercase tracking-wider">
-                PROJECT KEYSTONE (v0.1.0-alpha.2)
+                PROJECT KEYSTONE (v0.1.0-alpha.3)
               </span>
             </div>
             <span className="text-[10px] text-slate-500 font-medium mt-0.5">
