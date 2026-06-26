@@ -41,6 +41,15 @@
   box-sizing: border-box;
 }
 
+.unitive-workspace-wrapper {
+  max-width: 1280px;
+  margin: 0 auto;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+}
+
 /* Base boxy container */
 .glass-panel {
   background: var(--bg-secondary);

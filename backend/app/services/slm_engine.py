@@ -22,6 +22,28 @@ class SLMEngine:
             ocr_text = str(ocr_res)
             words = []
             
+        # Prompt Injection Protection
+        from ..routers.admin import append_admin_log, load_admin_data
+        admin_settings = load_admin_data()["settings"]
+        if admin_settings.get("prompt_injection_protection", True):
+            injection_keywords = [
+                "ignore previous instructions", 
+                "ignore instructions", 
+                "output the system prompt",
+                "system prompt", 
+                "override prompt",
+                "delete database", 
+                "drop table"
+            ]
+            found_patterns = [p for p in injection_keywords if p in ocr_text.lower()]
+            if found_patterns:
+                append_admin_log("injection", "WARNING", f"Potential prompt injection pattern detected in OCR text: {', '.join(found_patterns)}. Neutralizing...")
+                # Neutralize by replacing the offending phrases with a warning block
+                for pattern in found_patterns:
+                    # Case insensitive replace
+                    pattern_re = re.compile(re.escape(pattern), re.IGNORECASE)
+                    ocr_text = pattern_re.sub("[RESTRICTED SECURE VALUE BLOCKED]", ocr_text)
+            
         # Try heuristic table extraction first if words are present
         if words:
             table_data = self._extract_table_records(words, ocr_text)

@@ -5,7 +5,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import settings
 from .database import engine, Base
-from .routers import documents, mappings, automation
+from .routers import documents, mappings, automation, admin
 
 # Create DB tables (if they don't exist)
 Base.metadata.create_all(bind=engine)
@@ -24,10 +24,109 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from fastapi import Request
+from fastapi.responses import JSONResponse
+import time
+from collections import defaultdict
+from .routers.admin import append_admin_log, load_admin_data
+
+# Simple sliding window rate limiter in memory (IP -> list of timestamps)
+IP_REQUESTS = defaultdict(list)
+
+@app.middleware("http")
+async def rate_limiting_middleware(request: Request, call_next):
+    # Only rate limit API requests
+    if request.url.path.startswith(settings.API_V1_STR):
+        # Exclude admin routes from auth checks to prevent lockout loops
+        if "/admin/" not in request.url.path:
+            # 1. Resolve API Key & RBAC Info
+            api_key_header = request.headers.get("X-API-Key") or request.headers.get("Authorization")
+            workspace_name = "Default Workspace"
+            user_name = "Guest User"
+            api_key_prefix = "Unauthenticated"
+            permissions_role = "Read Only"
+            plan_name = "Free Tier"
+            
+            # API Key authentication
+            if api_key_header:
+                raw_key = api_key_header
+                if raw_key.lower().startswith("bearer "):
+                    raw_key = raw_key[7:]
+                
+                import hashlib
+                key_hash = hashlib.sha256(raw_key.strip().encode()).hexdigest()
+                
+                try:
+                    data = load_admin_data()
+                    matched_key = None
+                    for k in data.get("keys", []):
+                        if k.get("hashed_key") == key_hash and k.get("status") == "active":
+                            matched_key = k
+                            break
+                    if matched_key:
+                        workspace_name = matched_key.get("workspace", "Default Workspace")
+                        permissions_role = matched_key.get("role", "Developer")
+                        api_key_prefix = matched_key.get("prefix", "uni_live...")
+                        user_name = matched_key.get("name", "Operator")
+                        plan_name = "Enterprise Plan" if permissions_role == "Admin" else "Standard Plan"
+                    else:
+                        append_admin_log("auth", "WARNING", f"Access Denied: Invalid or revoked API Key supplied to '{request.url.path}'.")
+                        return JSONResponse(
+                            status_code=401,
+                            content={"detail": "Unauthorized. Invalid or revoked API Key."},
+                        )
+                except Exception as e:
+                    print(f"Failed to lookup API key: {e}")
+            
+            # 2. Layered Rate Limiter: Per-IP or Per-API-Key
+            try:
+                admin_settings = load_admin_data()["settings"]
+                ip_limit = admin_settings.get("rate_limit_ip", 30)
+                key_limit = admin_settings.get("rate_limit_api_key", 100)
+            except Exception:
+                ip_limit = 30
+                key_limit = 100
+                
+            client_ip = request.client.host or "127.0.0.1"
+            current_time = time.time()
+            
+            # Layered Rate Limit Enforcement
+            if api_key_header and api_key_prefix != "Unauthenticated":
+                # Limit per API Key
+                key_identifier = f"key_{api_key_prefix}"
+                IP_REQUESTS[key_identifier] = [t for t in IP_REQUESTS[key_identifier] if current_time - t < 60]
+                if len(IP_REQUESTS[key_identifier]) >= key_limit:
+                    append_admin_log("ratelimit", "WARNING", f"Rate limit 429 triggered for API Key '{api_key_prefix}' (Limit: {key_limit} req/min). User: '{user_name}', Workspace: '{workspace_name}'")
+                    return JSONResponse(
+                        status_code=429,
+                        content={"detail": "Too Many Requests. API Key rate limit exceeded. Please retry later."},
+                        headers={"Retry-After": "18"}
+                    )
+                IP_REQUESTS[key_identifier].append(current_time)
+            else:
+                # Limit per IP
+                IP_REQUESTS[client_ip] = [t for t in IP_REQUESTS[client_ip] if current_time - t < 60]
+                if len(IP_REQUESTS[client_ip]) >= ip_limit:
+                    append_admin_log("ratelimit", "WARNING", f"Rate limit 429 triggered for IP '{client_ip}' (Limit: {ip_limit} req/min).")
+                    return JSONResponse(
+                        status_code=429,
+                        content={"detail": "Too Many Requests. IP rate limit exceeded. Please retry later."},
+                        headers={"Retry-After": "18"}
+                    )
+                IP_REQUESTS[client_ip].append(current_time)
+                
+            # Log write/delete requests in administrative audit logs
+            if request.method in ["POST", "DELETE"]:
+                append_admin_log("audit", "INFO", f"Audit: Request {request.method} {request.url.path} from User '{user_name}' ({permissions_role}) of Workspace '{workspace_name}' on Plan '{plan_name}'.")
+
+    response = await call_next(request)
+    return response
+
 # Route registrations
 app.include_router(documents.router, prefix=settings.API_V1_STR)
 app.include_router(mappings.router, prefix=settings.API_V1_STR)
 app.include_router(automation.router, prefix=settings.API_V1_STR)
+app.include_router(admin.router, prefix=settings.API_V1_STR)
 
 # Serve uploaded documents & Playwright screenshots
 # Create sub-folders if missing

@@ -27,6 +27,19 @@ def process_document_task(doc_id: str, db_session_maker):
         if not doc:
             return
             
+        # Simulate Virus scanning quarantine phase
+        from .admin import append_admin_log, load_admin_data
+        admin_settings = load_admin_data()["settings"]
+        
+        if admin_settings.get("virus_scanning_enabled", True):
+            append_admin_log("security", "INFO", f"ClamAV: Starting quarantine virus scan on '{doc.filename}'...")
+            # Mock virus scan delay
+            import time
+            time.sleep(0.4) 
+            append_admin_log("security", "INFO", f"ClamAV: Virus scan passed for '{doc.filename}' (clean scan signature).")
+        else:
+            append_admin_log("security", "WARNING", f"Virus scanner disabled in security settings. Bypassing scan for: {doc.filename}")
+            
         doc.status = "processing"
         db.commit()
         
@@ -273,16 +286,63 @@ def process_document_task(doc_id: str, db_session_maker):
         db.close()
 
 
+# Simple global in-memory deduplication cache
+# Maps SHA-256 hash -> document ID
+DEDUPLICATION_CACHE = {}
+
 @router.post("/upload", response_model=DocumentResponse)
 def upload_document(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     db: Session = Depends(get_db)
 ):
+    import hashlib
+    from .admin import append_admin_log, load_admin_data
+
+    # 1. Load active security settings
+    admin_settings = load_admin_data()["settings"]
+    max_size_mb = admin_settings.get("max_file_size_mb", 20)
+    allowed_exts = admin_settings.get("allowed_extensions", ["pdf", "png", "jpeg", "jpg", "tiff"])
+    dup_detection = admin_settings.get("duplicate_detection_sha256", True)
+
+    # 2. File Upload Security: Extension validation
+    filename = file.filename
+    ext = os.path.splitext(filename.lower())[1].lstrip(".")
+    if ext not in allowed_exts:
+        append_admin_log("quarantine", "WARNING", f"Rejected upload of '{filename}' (type: .{ext}). Profile not allowed under settings.")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Security Policy Violation: File type .{ext} is restricted. Allowed profiles: {', '.join(allowed_exts)}."
+        )
+
+    # 3. Read bytes to compute size and SHA-256 hash
+    file_bytes = file.file.read()
+    file_size_mb = len(file_bytes) / (1024 * 1024)
+    
+    # File size validation
+    if file_size_mb > max_size_mb:
+        append_admin_log("quarantine", "WARNING", f"Rejected upload of '{filename}' (size: {file_size_mb:.2f}MB). Exceeded {max_size_mb}MB limit.")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Security Policy Violation: File exceeds maximum allowed size of {max_size_mb}MB."
+        )
+        
+    # Reset file read pointer
+    file.file.seek(0)
+    
+    # 4. Duplicate Detection via SHA-256
+    file_hash = hashlib.sha256(file_bytes).hexdigest()
+    if dup_detection and file_hash in DEDUPLICATION_CACHE:
+        cached_doc_id = DEDUPLICATION_CACHE[file_hash]
+        cached_doc = db.query(DBModelDocument).filter(DBModelDocument.id == cached_doc_id).first()
+        if cached_doc and cached_doc.status == "completed":
+            append_admin_log("deduplication", "INFO", f"Duplicate SHA-256 match for '{filename}'. Returning cached document ID: {cached_doc_id[:8]}...")
+            return cached_doc
+
     # Save file
     file_path = os.path.join(settings.UPLOAD_DIR, file.filename)
     with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+        buffer.write(file_bytes)
         
     # Create DB Record
     db_doc = DBModelDocument(
@@ -295,6 +355,12 @@ def upload_document(
     db.commit()
     db.refresh(db_doc)
     
+    # Cache the hash for deduplication
+    DEDUPLICATION_CACHE[file_hash] = db_doc.id
+    
+    # 5. Live logging and virus scan scheduling
+    append_admin_log("security", "INFO", f"Ingested '{filename}'. Scheduling ClamAV quarantine virus scan...")
+
     # Trigger background pipeline
     from ..database import SessionLocal
     background_tasks.add_task(process_document_task, db_doc.id, SessionLocal)

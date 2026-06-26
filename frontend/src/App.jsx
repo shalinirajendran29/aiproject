@@ -3,7 +3,8 @@ import {
   UploadCloud, Cpu, FileText, CheckCircle, Server, Globe, 
   RefreshCw, Play, Check, Eye, AlertCircle, HelpCircle, Save,
   Plus, X, Trash2, Layers, Layout, Activity, Terminal, Database, 
-  ShieldAlert, Monitor, ChevronRight, Sliders, Settings
+  ShieldAlert, Monitor, ChevronRight, Sliders, Settings, Shield,
+  Key, Lock
 } from 'lucide-react';
 
 const STANDARD_FIELDS = [
@@ -96,8 +97,52 @@ export default function App() {
     verification: true,
     mapper: true,
     logs: true,
-    evidence: true
+    evidence: true,
+    admin: true
   });
+
+  // Admin Console States
+  const [adminSettings, setAdminSettings] = useState({
+    rate_limit_api_key: 100,
+    rate_limit_ip: 30,
+    allowed_extensions: ['pdf', 'png', 'jpeg', 'jpg', 'tiff'],
+    max_file_size_mb: 20,
+    virus_scanning_enabled: true,
+    concurrency_limit_user: 5,
+    concurrency_limit_workspace: 20,
+    timeout_ocr_sec: 60,
+    timeout_llm_sec: 90,
+    timeout_api_sec: 30,
+    data_retention_days: 90,
+    webhook_secret: "unitive_hmac_sec_99182",
+    webhook_url: "https://unitive.in/callbacks/invoices",
+    prompt_injection_protection: true,
+    duplicate_detection_sha256: true,
+    cors_allowed_origins: ["dashboard.unitive.in", "unitive.in"]
+  });
+  const [adminLogs, setAdminLogs] = useState([]);
+  const [adminMetrics, setAdminMetrics] = useState({
+    total_documents: 0,
+    completed: 0,
+    failed: 0,
+    processing: 0,
+    success_rate_percent: 100.0,
+    avg_ocr_latency_sec: 4.15,
+    avg_llm_latency_sec: 1.68,
+    quarantined_files_blocked: 0,
+    prompt_injections_neutralized: 0,
+    rate_limit_429_count: 0,
+    duplicate_cache_hits: 0,
+    total_tokens_consumed: 0,
+    estimated_api_cost_usd: 0.0,
+    active_queue_workers: 0
+  });
+  const [adminKeys, setAdminKeys] = useState([]);
+  const [adminActiveTab, setAdminActiveTab] = useState('metrics'); // 'metrics', 'settings', 'keys', 'logs'
+  const [newKeyWorkspace, setNewKeyWorkspace] = useState('');
+  const [newKeyName, setNewKeyName] = useState('');
+  const [newKeyRole, setNewKeyRole] = useState('Developer');
+  const [newlyCreatedKey, setNewlyCreatedKey] = useState(null);
 
   // Telemetry simulated states
   const [latency, setLatency] = useState(24);
@@ -226,10 +271,164 @@ export default function App() {
     }
   };
 
+  const fetchAdminSettings = async () => {
+    try {
+      const res = await fetch('/api/v1/admin/settings');
+      if (res.ok) {
+        const data = await res.json();
+        setAdminSettings(data);
+      }
+    } catch (e) {
+      console.error("Error fetching admin settings:", e);
+    }
+  };
+
+  const fetchAdminData = async () => {
+    try {
+      const [logsRes, metricsRes, keysRes] = await Promise.all([
+        fetch('/api/v1/admin/logs'),
+        fetch('/api/v1/admin/metrics'),
+        fetch('/api/v1/admin/keys')
+      ]);
+      
+      if (logsRes.ok) {
+        const logsData = await logsRes.json();
+        setAdminLogs(logsData);
+      }
+      if (metricsRes.ok) {
+        const metricsData = await metricsRes.json();
+        setAdminMetrics(metricsData);
+      }
+      if (keysRes.ok) {
+        const keysData = await keysRes.json();
+        setAdminKeys(keysData);
+      }
+    } catch (e) {
+      console.error("Error fetching admin data:", e);
+    }
+  };
+
+  const saveAdminSettings = async (updatedSettings) => {
+    try {
+      const res = await fetch('/api/v1/admin/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedSettings)
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setAdminSettings(data);
+        addLog('Enterprise security policy settings updated.', 'sys');
+      }
+    } catch (e) {
+      console.error("Error saving admin settings:", e);
+    }
+  };
+
+  const handleCreateAPIKey = async () => {
+    if (!newKeyWorkspace.trim() || !newKeyName.trim()) {
+      alert("Please fill in the Workspace name and Key descriptor.");
+      return;
+    }
+    try {
+      const res = await fetch('/api/v1/admin/keys', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          workspace: newKeyWorkspace,
+          name: newKeyName,
+          role: newKeyRole
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setNewlyCreatedKey(data);
+        setNewKeyWorkspace('');
+        setNewKeyName('');
+        fetchAdminData();
+        addLog(`Created new API Key for workspace: ${data.workspace}`, 'sys');
+      }
+    } catch (e) {
+      console.error("Error creating key:", e);
+    }
+  };
+
+  const handleRotateKey = async (keyId) => {
+    if (!confirm("Are you sure you want to rotate this API key? Plaintext key will change, and the old key will immediately stop working.")) return;
+    try {
+      const res = await fetch('/api/v1/admin/keys/rotate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key_id: keyId })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setNewlyCreatedKey(data);
+        fetchAdminData();
+        addLog(`Rotated API Key ${keyId}`, 'sys');
+      }
+    } catch (e) {
+      console.error("Error rotating key:", e);
+    }
+  };
+
+  const handleRevokeKey = async (keyId) => {
+    if (!confirm("Are you sure you want to revoke this API key? This cannot be undone.")) return;
+    try {
+      const res = await fetch('/api/v1/admin/keys/revoke', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key_id: keyId })
+      });
+      if (res.ok) {
+        fetchAdminData();
+        addLog(`Revoked API Key ${keyId}`, 'sys');
+      }
+    } catch (e) {
+      console.error("Error revoking key:", e);
+    }
+  };
+
+  const handleDeleteKey = async (keyId) => {
+    if (!confirm("Are you sure you want to delete this API key from the database record?")) return;
+    try {
+      const res = await fetch('/api/v1/admin/keys/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key_id: keyId })
+      });
+      if (res.ok) {
+        fetchAdminData();
+        addLog(`Deleted API Key ${keyId}`, 'sys');
+      }
+    } catch (e) {
+      console.error("Error deleting key:", e);
+    }
+  };
+
+  const handleClearAdminLogs = async () => {
+    if (!confirm("Are you sure you want to purge all administrative security audit logs?")) return;
+    try {
+      const res = await fetch('/api/v1/admin/logs/clear', { method: 'POST' });
+      if (res.ok) {
+        fetchAdminData();
+        addLog("Administrative audit logs purged.", "sys");
+      }
+    } catch (e) {
+      console.error("Error clearing logs:", e);
+    }
+  };
+
   useEffect(() => {
     fetchStats();
+    fetchAdminSettings();
+    fetchAdminData();
     // Default to the actual retail ERP site
     setTargetUrl('http://erpretails.s3-website.ap-south-1.amazonaws.com/admin/customer/form?type=create');
+    const interval = setInterval(() => {
+      fetchAdminData();
+    }, 4000);
+    return () => clearInterval(interval);
   }, []);
 
   // Upload file handler supporting single and batch uploads
@@ -1359,9 +1558,421 @@ export default function App() {
     );
   };
 
+  // 8. ENTERPRISE ADMIN CONSOLE PLUGIN
+  const renderAdminPlugin = () => {
+    if (!activePlugins.admin) return null;
+    return (
+      <div className="glass-panel flex flex-col gap-4" style={{ borderTop: '3px solid var(--accent-secondary)' }}>
+        <div className="card-header-bar">
+          <div className="card-header-title">
+            <Shield className="w-4 h-4 text-pink-500" />
+            <span>Plugin // Enterprise_Admin_Console</span>
+          </div>
+          <div className="card-header-actions">
+            <div className="card-action-dot red" onClick={() => togglePlugin('admin')} title="Hide module"></div>
+            <div className="card-action-dot yellow" title="Logs tab" onClick={() => setAdminActiveTab('logs')}></div>
+            <div className="card-action-dot green" title="Settings tab" onClick={() => setAdminActiveTab('settings')}></div>
+          </div>
+        </div>
+
+        {/* Tab Selection */}
+        <div className="flex border-b border-slate-200 pb-1 gap-1">
+          {[
+            { id: 'metrics', label: 'System Metrics' },
+            { id: 'settings', label: 'Security Settings' },
+            { id: 'keys', label: 'Workspace API Keys' },
+            { id: 'logs', label: 'Security Audit logs' }
+          ].map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => {
+                setAdminActiveTab(tab.id);
+                setNewlyCreatedKey(null);
+              }}
+              className={`px-3 py-1.5 font-mono text-[9px] font-bold rounded transition-all border ${
+                adminActiveTab === tab.id
+                  ? 'bg-slate-900 text-white border-slate-900 shadow-sm'
+                  : 'bg-slate-50 text-slate-500 hover:bg-slate-100 border-slate-200'
+              }`}
+            >
+              {tab.label.toUpperCase()}
+            </button>
+          ))}
+        </div>
+
+        {/* TAB 1: METRICS */}
+        {adminActiveTab === 'metrics' && (
+          <div className="flex flex-col gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+              {[
+                { label: 'Total Ingested', value: adminMetrics.total_documents, color: 'text-slate-700' },
+                { label: 'Success Rate', value: `${adminMetrics.success_rate_percent}%`, color: 'text-emerald-600 font-bold' },
+                { label: 'Estimated API Cost', value: `$${adminMetrics.estimated_api_cost_usd}`, color: 'text-indigo-600' },
+                { label: 'Avg OCR Latency', value: `${adminMetrics.avg_ocr_latency_sec}s`, color: 'text-amber-600' },
+                { label: 'Avg LLM Latency', value: `${adminMetrics.avg_llm_latency_sec}s`, color: 'text-purple-600' },
+                { label: 'Active Workers', value: adminMetrics.active_queue_workers, color: 'text-teal-600' },
+              ].map((m, idx) => (
+                <div key={idx} className="bg-slate-50 border border-slate-200 p-2.5 rounded flex flex-col gap-1 shadow-sm">
+                  <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">{m.label}</span>
+                  <span className={`text-xs font-mono font-bold ${m.color}`}>{m.value}</span>
+                </div>
+              ))}
+            </div>
+
+            {/* Security Blocks Section */}
+            <div className="border border-slate-200 rounded p-3 bg-slate-50 flex flex-col gap-2">
+              <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">Security Rule Enforcement Counters</span>
+              <div className="grid grid-cols-2 gap-2 text-[10px] font-mono">
+                <div className="flex justify-between items-center p-1.5 bg-white border border-slate-150 rounded">
+                  <span className="text-red-600 font-semibold">Quarantined Threats:</span>
+                  <span className="font-bold text-slate-800">{adminMetrics.quarantined_files_blocked}</span>
+                </div>
+                <div className="flex justify-between items-center p-1.5 bg-white border border-slate-150 rounded">
+                  <span className="text-orange-600 font-semibold">Prompt Injections:</span>
+                  <span className="font-bold text-slate-800">{adminMetrics.prompt_injections_neutralized}</span>
+                </div>
+                <div className="flex justify-between items-center p-1.5 bg-white border border-slate-150 rounded">
+                  <span className="text-amber-600 font-semibold">Rate Limit Triggers:</span>
+                  <span className="font-bold text-slate-800">{adminMetrics.rate_limit_429_count}</span>
+                </div>
+                <div className="flex justify-between items-center p-1.5 bg-white border border-slate-150 rounded">
+                  <span className="text-emerald-600 font-semibold">Duplicate Cache Hits:</span>
+                  <span className="font-bold text-slate-800">{adminMetrics.duplicate_cache_hits}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* TAB 2: SETTINGS */}
+        {adminActiveTab === 'settings' && (
+          <div className="flex flex-col gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+              
+              <div className="flex flex-col gap-1">
+                <div className="flex justify-between text-[10px] font-bold">
+                  <span className="text-slate-600">Rate Limit (Per API Key)</span>
+                  <span className="text-orange-600 font-mono">{adminSettings.rate_limit_api_key} req/m</span>
+                </div>
+                <input
+                  type="range"
+                  min="10"
+                  max="500"
+                  step="10"
+                  value={adminSettings.rate_limit_api_key}
+                  onChange={(e) => saveAdminSettings({ ...adminSettings, rate_limit_api_key: parseInt(e.target.value) })}
+                  className="w-full h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <div className="flex justify-between text-[10px] font-bold">
+                  <span className="text-slate-600">Rate Limit (Unauth Per IP)</span>
+                  <span className="text-orange-600 font-mono">{adminSettings.rate_limit_ip} req/m</span>
+                </div>
+                <input
+                  type="range"
+                  min="5"
+                  max="100"
+                  step="5"
+                  value={adminSettings.rate_limit_ip}
+                  onChange={(e) => saveAdminSettings({ ...adminSettings, rate_limit_ip: parseInt(e.target.value) })}
+                  className="w-full h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <div className="flex justify-between text-[10px] font-bold">
+                  <span className="text-slate-600">Max Ingestion File Size</span>
+                  <span className="text-indigo-600 font-mono">{adminSettings.max_file_size_mb} MB</span>
+                </div>
+                <input
+                  type="range"
+                  min="1"
+                  max="100"
+                  step="1"
+                  value={adminSettings.max_file_size_mb}
+                  onChange={(e) => saveAdminSettings({ ...adminSettings, max_file_size_mb: parseInt(e.target.value) })}
+                  className="w-full h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <div className="flex justify-between text-[10px] font-bold">
+                  <span className="text-slate-600">Data Lifecycle Retention</span>
+                  <span className="text-indigo-600 font-mono">{adminSettings.data_retention_days} days</span>
+                </div>
+                <input
+                  type="range"
+                  min="7"
+                  max="365"
+                  step="7"
+                  value={adminSettings.data_retention_days}
+                  onChange={(e) => saveAdminSettings({ ...adminSettings, data_retention_days: parseInt(e.target.value) })}
+                  className="w-full h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1 col-span-1 md:col-span-2">
+                <span className="text-[10px] font-bold text-slate-600">Allowed Ingestion Extensions (comma separated)</span>
+                <input
+                  type="text"
+                  value={adminSettings.allowed_extensions.join(', ')}
+                  onChange={(e) => saveAdminSettings({ ...adminSettings, allowed_extensions: e.target.value.split(',').map(s => s.trim().toLowerCase()).filter(Boolean) })}
+                  className="input-glass text-xs py-1.5 px-2 mt-1"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <span className="text-[10px] font-bold text-slate-600">OCR Engine Timeout (seconds)</span>
+                <input
+                  type="number"
+                  value={adminSettings.timeout_ocr_sec}
+                  onChange={(e) => saveAdminSettings({ ...adminSettings, timeout_ocr_sec: parseInt(e.target.value) || 60 })}
+                  className="bg-slate-100 border border-slate-200 rounded px-2.5 py-1 text-xs font-mono text-slate-700"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <span className="text-[10px] font-bold text-slate-600">LLM Cognitive Timeout (seconds)</span>
+                <input
+                  type="number"
+                  value={adminSettings.timeout_llm_sec}
+                  onChange={(e) => saveAdminSettings({ ...adminSettings, timeout_llm_sec: parseInt(e.target.value) || 90 })}
+                  className="bg-slate-100 border border-slate-200 rounded px-2.5 py-1 text-xs font-mono text-slate-700"
+                />
+              </div>
+
+              <div className="flex flex-col gap-2.5 border-t border-slate-100 pt-3 col-span-1 md:col-span-2">
+                {[
+                  { key: 'virus_scanning_enabled', label: 'Enable ClamAV Quarantine / Malware Scan' },
+                  { key: 'prompt_injection_protection', label: 'Enable System Override Prompt Injection Protection' },
+                  { key: 'duplicate_detection_sha256', label: 'Enable SHA-256 Request Deduplication Cache' }
+                ].map(item => (
+                  <label key={item.key} className="flex items-center gap-2 cursor-pointer text-[11px] font-medium text-slate-600">
+                    <input
+                      type="checkbox"
+                      checked={adminSettings[item.key]}
+                      onChange={(e) => saveAdminSettings({ ...adminSettings, [item.key]: e.target.checked })}
+                      className="rounded border-slate-350 text-orange-600 focus:ring-orange-500"
+                    />
+                    <span>{item.label}</span>
+                  </label>
+                ))}
+              </div>
+
+              <div className="flex flex-col gap-1 border-t border-slate-100 pt-3 col-span-1 md:col-span-2">
+                <span className="text-[10px] font-bold text-slate-600">Webhook Callback Endpoint URL</span>
+                <input
+                  type="text"
+                  placeholder="https://client-system.com/webhooks"
+                  value={adminSettings.webhook_url}
+                  onChange={(e) => saveAdminSettings({ ...adminSettings, webhook_url: e.target.value })}
+                  className="input-glass text-xs py-1.5 px-2 mt-1"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1 col-span-1 md:col-span-2">
+                <div className="flex justify-between text-[10px] font-bold">
+                  <span className="text-slate-600">Webhook Signature Secret (HMAC-SHA256)</span>
+                  <button 
+                    onClick={() => saveAdminSettings({ ...adminSettings, webhook_secret: `unitive_hmac_${Math.random().toString(36).substring(2, 10)}` })}
+                    className="text-[8px] text-orange-600 font-mono hover:underline border-none bg-transparent cursor-pointer"
+                  >
+                    [ROTATE WEBHOOK SECRET]
+                  </button>
+                </div>
+                <input
+                  type="text"
+                  value={adminSettings.webhook_secret}
+                  onChange={(e) => saveAdminSettings({ ...adminSettings, webhook_secret: e.target.value })}
+                  className="input-glass text-xs font-mono py-1.5 px-2 mt-1"
+                />
+              </div>
+
+            </div>
+          </div>
+        )}
+
+        {/* TAB 3: API KEYS */}
+        {adminActiveTab === 'keys' && (
+          <div className="flex flex-col gap-4">
+            
+            <div className="bg-slate-50 border border-slate-200 rounded p-3 flex flex-col gap-2.5">
+              <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider font-mono">Issue Workspace Access API Key</span>
+              
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                <input
+                  type="text"
+                  placeholder="Workspace Name (e.g. ERP Retail)"
+                  value={newKeyWorkspace}
+                  onChange={(e) => setNewKeyWorkspace(e.target.value)}
+                  className="input-glass text-[11px] py-1.5 px-2"
+                />
+                <input
+                  type="text"
+                  placeholder="Key Descriptor (e.g. Dev Server)"
+                  value={newKeyName}
+                  onChange={(e) => setNewKeyName(e.target.value)}
+                  className="input-glass text-[11px] py-1.5 px-2"
+                />
+                <select
+                  value={newKeyRole}
+                  onChange={(e) => setNewKeyRole(e.target.value)}
+                  className="bg-white border border-slate-200 text-[11px] rounded px-2 py-1 text-slate-600 focus:outline-none"
+                >
+                  <option value="Admin">Admin</option>
+                  <option value="Developer">Developer</option>
+                  <option value="Read Only">Read Only</option>
+                  <option value="Billing">Billing</option>
+                </select>
+              </div>
+
+              <div className="flex justify-end">
+                <button
+                  onClick={handleCreateAPIKey}
+                  className="px-3 py-1.5 bg-orange-600 hover:bg-orange-500 text-white rounded text-[10px] font-bold transition-colors"
+                >
+                  GENERATE CRITICAL CREDENTIAL
+                </button>
+              </div>
+            </div>
+
+            {newlyCreatedKey && (
+              <div className="p-3 bg-rose-50 border border-rose-200 rounded text-rose-800 text-[11px] flex flex-col gap-1.5 font-mono">
+                <span className="font-bold text-rose-700 uppercase">[!] SECURE PLAIN-TEXT API KEY GENERATED:</span>
+                <div className="flex gap-2 items-center bg-white border border-rose-200 p-1.5 rounded">
+                  <span className="text-rose-900 font-bold select-all flex-1 text-xs truncate">{newlyCreatedKey.raw_key}</span>
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(newlyCreatedKey.raw_key);
+                      alert("Plaintext key copied! Save it now. It will not be shown again.");
+                    }}
+                    className="px-2 py-0.5 bg-slate-900 hover:bg-slate-800 text-white rounded text-[9px]"
+                  >
+                    COPY KEY
+                  </button>
+                </div>
+                <span className="text-[9px] text-rose-600">This key is hashed using SHA-256 before storage. Keep it safe. Plaintext cannot be recovered.</span>
+              </div>
+            )}
+
+            <div className="overflow-x-auto border border-slate-200 rounded bg-white">
+              <table className="min-w-full divide-y divide-slate-200 text-[10px]">
+                <thead className="bg-slate-50 font-mono">
+                  <tr>
+                    <th className="px-3 py-2 text-left text-[9px] font-bold text-slate-500 uppercase">Descriptor</th>
+                    <th className="px-3 py-2 text-left text-[9px] font-bold text-slate-500 uppercase">Workspace</th>
+                    <th className="px-3 py-2 text-left text-[9px] font-bold text-slate-500 uppercase">Prefix</th>
+                    <th className="px-3 py-2 text-left text-[9px] font-bold text-slate-500 uppercase">Role</th>
+                    <th className="px-3 py-2 text-left text-[9px] font-bold text-slate-500 uppercase">State</th>
+                    <th className="px-3 py-2 text-right text-[9px] font-bold text-slate-500 uppercase">Control</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-150 font-mono">
+                  {adminKeys.map((k) => (
+                    <tr key={k.key_id} className="hover:bg-slate-50">
+                      <td className="px-3 py-2 font-medium text-slate-700">{k.name}</td>
+                      <td className="px-3 py-2 text-slate-500 truncate max-w-[100px]">{k.workspace}</td>
+                      <td className="px-3 py-2 text-slate-600 font-bold">{k.prefix}</td>
+                      <td className="px-3 py-2">
+                        <span className={`px-1.5 py-0.5 rounded text-[8px] font-bold uppercase ${
+                          k.role === 'Admin' ? 'bg-red-50 text-red-600 border border-red-100' :
+                          k.role === 'Developer' ? 'bg-blue-50 text-blue-600 border border-blue-100' :
+                          k.role === 'Billing' ? 'bg-amber-50 text-amber-600 border border-amber-100' :
+                          'bg-slate-50 text-slate-600 border border-slate-100'
+                        }`}>
+                          {k.role}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2">
+                        <span className={`px-1 rounded text-[8px] ${
+                          k.status === 'active' ? 'bg-emerald-50 text-emerald-600 font-semibold' : 'bg-red-50 text-red-500 line-through'
+                        }`}>
+                          {k.status}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 text-right flex justify-end gap-1.5">
+                        <button
+                          onClick={() => handleRotateKey(k.key_id)}
+                          className="px-1.5 py-0.5 bg-slate-105 hover:bg-slate-200 border border-slate-350 rounded text-[9px]"
+                          title="Rotate API Key"
+                        >
+                          ROTATE
+                        </button>
+                        {k.status === 'active' && (
+                          <button
+                            onClick={() => handleRevokeKey(k.key_id)}
+                            className="px-1.5 py-0.5 bg-rose-50 hover:bg-rose-100 border border-rose-250 text-rose-600 rounded text-[9px]"
+                            title="Revoke access"
+                          >
+                            REVOKE
+                          </button>
+                        )}
+                        <button
+                          onClick={() => handleDeleteKey(k.key_id)}
+                          className="px-1.5 py-0.5 bg-slate-900 hover:bg-slate-800 text-white rounded text-[9px]"
+                          title="Delete key record"
+                        >
+                          DELETE
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+          </div>
+        )}
+
+        {/* TAB 4: AUDIT LOGS */}
+        {adminActiveTab === 'logs' && (
+          <div className="flex flex-col gap-3">
+            <div className="flex justify-between items-center">
+              <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider font-mono">Security Guard Audit logs</span>
+              <button
+                onClick={handleClearAdminLogs}
+                className="text-[9px] font-mono text-red-500 hover:underline border-none bg-transparent cursor-pointer font-bold"
+              >
+                [PURGE AUDIT LOG DATABASE]
+              </button>
+            </div>
+
+            <div className="bg-slate-950 text-slate-300 font-mono text-[10px] rounded p-3 overflow-y-auto max-h-[220px] flex flex-col gap-1.5">
+              {adminLogs.length === 0 ? (
+                <div className="text-slate-600 italic">No security events triggered. Shield secure.</div>
+              ) : (
+                adminLogs.map((log, idx) => {
+                  let badgeColor = 'text-slate-400 border border-slate-800 bg-slate-900';
+                  if (log.event_type === 'quarantine' || log.level === 'WARNING' || log.event_type === 'injection') badgeColor = 'text-red-400 border border-red-950 bg-red-950/20';
+                  else if (log.event_type === 'ratelimit') badgeColor = 'text-orange-400 border border-orange-950 bg-orange-950/20';
+                  else if (log.event_type === 'auth') badgeColor = 'text-purple-400 border border-purple-950 bg-purple-950/20';
+                  else if (log.event_type === 'audit') badgeColor = 'text-emerald-400 border border-emerald-950 bg-emerald-950/20';
+                  else if (log.event_type === 'config') badgeColor = 'text-blue-400 border border-blue-950 bg-blue-950/20';
+
+                  return (
+                    <div key={idx} className="flex gap-2 items-start py-0.5 border-b border-slate-900 last:border-0 font-mono">
+                      <span className="text-slate-600 font-semibold">{log.timestamp.slice(11, 19)}</span>
+                      <span className={`px-1.5 py-0.5 rounded text-[8px] font-bold uppercase ${badgeColor}`}>
+                        {log.event_type || 'system'}
+                      </span>
+                      <span className="flex-1 text-slate-200">{log.message}</span>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="smartfill-plugin-root min-h-screen p-4 text-slate-700">
-      {/* Brand Header */}
+      <div className="unitive-workspace-wrapper">
+        {/* Brand Header */}
       <header className="glass-panel flex flex-col md:flex-row justify-between items-center gap-4 mb-4" style={{ padding: '12px 20px', borderLeft: '4px solid var(--accent-color)' }}>
         <div className="flex items-center gap-4">
           {/* Unitive Official Logo Image */}
@@ -1460,7 +2071,8 @@ export default function App() {
               { key: 'feed', label: 'Repository_Feed' },
               { key: 'verification', label: 'Verification_Studio' },
               { key: 'mapper', label: 'Portal_DOM_Mapper' },
-              { key: 'logs', label: 'Live_Engine_Console' }
+              { key: 'logs', label: 'Live_Engine_Console' },
+              { key: 'admin', label: 'Admin_Console' }
             ].map((p) => (
               <button
                 key={p.key}
@@ -1506,6 +2118,7 @@ export default function App() {
             {/* Column 2: Middle */}
             <div className="flex flex-col gap-4">
               {renderVerificationPlugin()}
+              {renderAdminPlugin()}
             </div>
             
             {/* Column 3: Right */}
@@ -1525,6 +2138,7 @@ export default function App() {
             <div className="flex flex-col gap-4">
               {renderIngestorPlugin()}
               {renderFeedPlugin()}
+              {renderAdminPlugin()}
               {renderMapperPlugin()}
               {renderLogsPlugin()}
             </div>
@@ -1548,7 +2162,8 @@ export default function App() {
                 { key: 'feed', label: 'Repository Feed', enabled: activePlugins.feed },
                 { key: 'verification', label: 'Verification Studio', enabled: activePlugins.verification },
                 { key: 'mapper', label: 'DOM Mapper', enabled: activePlugins.mapper },
-                { key: 'logs', label: 'Engine Console', enabled: activePlugins.logs }
+                { key: 'logs', label: 'Engine Console', enabled: activePlugins.logs },
+                { key: 'admin', label: 'Admin Console', enabled: activePlugins.admin }
               ].filter(t => t.enabled).map((t) => (
                 <button
                   key={t.key}
@@ -1590,6 +2205,7 @@ export default function App() {
             {focusTab === 'mapper' && renderMapperPlugin()}
             {focusTab === 'logs' && renderLogsPlugin()}
             {focusTab === 'evidence' && renderEvidencePlugin()}
+            {focusTab === 'admin' && renderAdminPlugin()}
           </div>
         )}
       </main>
@@ -1710,6 +2326,7 @@ export default function App() {
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }
