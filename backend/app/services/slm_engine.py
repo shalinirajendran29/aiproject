@@ -114,10 +114,11 @@ class SLMEngine:
         result_data = None
         
         # Check if Google Gemini API key is configured
-        if self.gemini_api_key:
+        gemini_key = admin_settings.get("gemini_api_key") or self.gemini_api_key
+        if gemini_key:
             print("Gemini API key detected. Initiating Gemini AI cloud extraction...")
             try:
-                url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key={self.gemini_api_key}"
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key={gemini_key}"
                 payload = {
                     "contents": [{
                         "parts": [{"text": prompt}]
@@ -164,7 +165,7 @@ class SLMEngine:
 
         # Attach pipeline version metadata (Requirement 11)
         if isinstance(result_data, dict) and len(result_data) > 0:
-            model_name_used = "gemini-1.5-pro" if getattr(self, "gemini_api_key", None) else self.model
+            model_name_used = "gemini-1.5-pro" if gemini_key else self.model
             if "_pipeline_metadata" not in result_data:
                 result_data["_pipeline_metadata"] = {
                     "ocr_engine_version": "EasyOCR v3.1" if admin_settings.get("feature_flags_ocr", True) else "OCR Disabled",

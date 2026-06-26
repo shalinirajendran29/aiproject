@@ -38,7 +38,11 @@ DEFAULT_SETTINGS = {
   "feature_flags_ai": True,
   "feature_flags_autofill": True,
   "feature_flags_audit": True,
-  "feature_flags_virus_scan": True
+  "feature_flags_virus_scan": True,
+  "gemini_api_key": "",
+  "gcp_project_id": "",
+  "gcp_location": "us",
+  "docai_processor_id": ""
 }
 
 # Seed logs
@@ -156,6 +160,10 @@ class SettingsUpdateRequest(BaseModel):
     feature_flags_autofill: Optional[bool] = None
     feature_flags_audit: Optional[bool] = None
     feature_flags_virus_scan: Optional[bool] = None
+    gemini_api_key: Optional[str] = None
+    gcp_project_id: Optional[str] = None
+    gcp_location: Optional[str] = None
+    docai_processor_id: Optional[str] = None
 
 @router.get("/settings")
 def get_settings():

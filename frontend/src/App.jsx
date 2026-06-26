@@ -150,7 +150,11 @@ export default function App() {
     webhook_url: "https://unitive.in/callbacks/invoices",
     prompt_injection_protection: true,
     duplicate_detection_sha256: true,
-    cors_allowed_origins: ["dashboard.unitive.in", "unitive.in"]
+    cors_allowed_origins: ["dashboard.unitive.in", "unitive.in"],
+    gemini_api_key: '',
+    gcp_project_id: '',
+    gcp_location: 'us',
+    docai_processor_id: ''
   });
   const [adminLogs, setAdminLogs] = useState([]);
   const [adminMetrics, setAdminMetrics] = useState({
@@ -2621,7 +2625,7 @@ export default function App() {
             {!sidebarCollapsed && (
               <div className="logo-text">
                 <h2>Unitive Automate</h2>
-                <span>KEYSTONE v0.1.0-alpha.4</span>
+                <span>KEYSTONE v0.1.0-alpha.5</span>
               </div>
             )}
           </div>
@@ -3250,6 +3254,56 @@ export default function App() {
                             value={adminSettings.webhook_secret}
                             onChange={(e) => saveAdminSettings({ ...adminSettings, webhook_secret: e.target.value })}
                             className="input-glass text-xs font-mono py-1.5 px-2 mt-1"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Cloud Integrations */}
+                    <div className="settings-group">
+                      <h4 className="settings-group-title">Cloud Integrations (Primary AI & OCR)</h4>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div className="flex flex-col gap-1">
+                          <span className="text-[10px] font-bold text-slate-600">Google Gemini API Key</span>
+                          <input
+                            type="password"
+                            placeholder="AIzaSy..."
+                            value={adminSettings.gemini_api_key || ''}
+                            onChange={(e) => saveAdminSettings({ ...adminSettings, gemini_api_key: e.target.value })}
+                            className="input-glass text-xs py-1.5 px-2 mt-1"
+                          />
+                        </div>
+
+                        <div className="flex flex-col gap-1">
+                          <span className="text-[10px] font-bold text-slate-600">Google Cloud Project ID</span>
+                          <input
+                            type="text"
+                            placeholder="gcp-project-123"
+                            value={adminSettings.gcp_project_id || ''}
+                            onChange={(e) => saveAdminSettings({ ...adminSettings, gcp_project_id: e.target.value })}
+                            className="input-glass text-xs py-1.5 px-2 mt-1"
+                          />
+                        </div>
+
+                        <div className="flex flex-col gap-1">
+                          <span className="text-[10px] font-bold text-slate-600">Google Cloud Location</span>
+                          <input
+                            type="text"
+                            placeholder="us or eu"
+                            value={adminSettings.gcp_location || 'us'}
+                            onChange={(e) => saveAdminSettings({ ...adminSettings, gcp_location: e.target.value })}
+                            className="input-glass text-xs py-1.5 px-2 mt-1"
+                          />
+                        </div>
+
+                        <div className="flex flex-col gap-1">
+                          <span className="text-[10px] font-bold text-slate-600">Document AI Processor ID</span>
+                          <input
+                            type="text"
+                            placeholder="processor-id-hex"
+                            value={adminSettings.docai_processor_id || ''}
+                            onChange={(e) => saveAdminSettings({ ...adminSettings, docai_processor_id: e.target.value })}
+                            className="input-glass text-xs py-1.5 px-2 mt-1"
                           />
                         </div>
                       </div>
