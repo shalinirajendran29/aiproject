@@ -293,8 +293,8 @@ export default function App() {
   const fetchStats = async () => {
     setLoadingStats(true);
     try {
-      const rootRes = await secureFetch('/api/v1/documents').catch(() => null);
-      if (rootRes && rootRes.ok) {
+      const rootRes = await secureFetch('/api/v1/admin/settings').catch(() => null);
+      if (rootRes && (rootRes.ok || rootRes.status === 401 || rootRes.status === 403)) {
         setBackendOnline(true);
         addLog('FastAPI host connection handshake: SECURE.', 'sys');
       } else {

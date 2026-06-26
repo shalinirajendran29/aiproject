@@ -8,14 +8,20 @@ echo.
 
 :: 1. Check Python installation
 echo [*] Checking Python installation...
+set PYTHON_CMD=python
 python --version >nul 2>&1
 if %errorlevel% neq 0 (
-    echo [ERROR] Python is not installed or not in the PATH.
-    echo Please install Python 3.9+ and try again.
-    pause
-    exit /b 1
+    if exist "venv\Scripts\python.exe" (
+        set PYTHON_CMD=venv\Scripts\python.exe
+        echo [OK] Using Python from virtual environment: venv\Scripts\python.exe
+    ) else (
+        echo [ERROR] Python is not installed or not in the PATH.
+        echo Please install Python 3.9+ and try again.
+        pause
+        exit /b 1
+    )
 )
-python --version
+%PYTHON_CMD% --version
 
 :: 2. Check Node.js installation
 echo [*] Checking Node.js installation...
@@ -30,7 +36,7 @@ node --version
 
 :: 3. Setup Virtual Environment
 if not exist "venv" (
-    echo [*] Creating virtual environment (venv)...
+    echo [*] Creating virtual environment [venv]...
     python -m venv venv
     if %errorlevel% neq 0 (
         echo [ERROR] Failed to create virtual environment.
@@ -46,7 +52,7 @@ echo [*] Checking Python dependencies...
 call venv\Scripts\activate
 python -c "import fastapi, uvicorn, pydantic, sqlalchemy, cv2, numpy, easyocr, sentence_transformers, playwright, requests, psycopg2, torch, pydantic_settings" >nul 2>&1
 if %errorlevel% neq 0 (
-    echo [*] Installing python dependencies (this may take a few minutes)...
+    echo [*] Installing python dependencies [this may take a few minutes]...
     pip install -r backend\requirements.txt
     if !errorlevel! neq 0 (
         echo [ERROR] Failed to install Python dependencies.
@@ -65,7 +71,7 @@ if %errorlevel% neq 0 (
 :: 5. Setup frontend dependencies
 echo [*] Checking Frontend dependencies...
 if not exist "frontend\node_modules" (
-    echo [*] Installing frontend npm packages (this may take a minute)...
+    echo [*] Installing frontend npm packages [this may take a minute]...
     cd frontend
     call npm install
     cd ..
