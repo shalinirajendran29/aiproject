@@ -25,7 +25,7 @@
   --text-light: #f8fafc;
 }
 
-body {
+.smartfill-plugin-root {
   margin: 0;
   min-height: 100vh;
   overflow-x: hidden;
@@ -34,6 +34,10 @@ body {
     linear-gradient(rgba(99, 102, 241, 0.015) 1px, transparent 1px),
     linear-gradient(90deg, rgba(99, 102, 241, 0.015) 1px, transparent 1px);
   background-size: 20px 20px;
+  box-sizing: border-box;
+}
+.smartfill-plugin-root * {
+  box-sizing: border-box;
 }
 
 /* Base boxy container */
@@ -692,17 +696,17 @@ body {
 }
 
 /* Scrollbars */
-::-webkit-scrollbar {
+.smartfill-plugin-root ::-webkit-scrollbar {
   width: 4px;
   height: 4px;
 }
-::-webkit-scrollbar-track {
+.smartfill-plugin-root ::-webkit-scrollbar-track {
   background: rgba(0,0,0,0.2);
 }
-::-webkit-scrollbar-thumb {
+.smartfill-plugin-root ::-webkit-scrollbar-thumb {
   background: var(--border-color);
   border-radius: 2px;
 }
-::-webkit-scrollbar-thumb:hover {
+.smartfill-plugin-root ::-webkit-scrollbar-thumb:hover {
   background: var(--accent-color);
 }
