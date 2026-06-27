@@ -53,16 +53,21 @@ def fill_web_form(request: FillRequest, db: Session = Depends(get_db)):
     if not extracted_data:
         raise HTTPException(status_code=400, detail="No extracted data found on document to fill.")
 
-    # Support spreadsheet/table row selection
-    if "records" in extracted_data and isinstance(extracted_data["records"], list):
-        idx = request.record_index or 0
-        if 0 <= idx < len(extracted_data["records"]):
-            extracted_data = extracted_data["records"][idx]
-        else:
-            raise HTTPException(
-                status_code=400, 
-                detail=f"Invalid record_index: {idx}. The document contains {len(extracted_data['records'])} rows."
-            )
+    # Support spreadsheet/table row selection if record_index is explicitly specified
+    if request.record_index is not None:
+        if "records" in extracted_data and isinstance(extracted_data["records"], list):
+            idx = request.record_index
+            if 0 <= idx < len(extracted_data["records"]):
+                # Merge flat headers with the chosen record so it can be filled
+                single_record = extracted_data["records"][idx]
+                merged_data = {k: v for k, v in extracted_data.items() if k != "records"}
+                merged_data.update(single_record)
+                extracted_data = merged_data
+            else:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"Invalid record_index: {idx}. The document contains {len(extracted_data['records'])} rows."
+                )
 
     # 2. Fill form and take screenshot (scanning and mapping happens unified inside the browser)
     screenshot_filename = f"screenshot_{doc.id}.png"

@@ -67,6 +67,13 @@ class OCREngine:
             # If initially detected as two columns, verify if they represent independent columns.
             # Independent columns mean a line contains a label on the left AND a label on the right.
             if is_two_column:
+                # Disable two-column sorting for invoices, bills, and GRNs
+                invoice_keywords = {"invoice", "grn", "received notes", "purchase order", "challan", "bill of supply", "tax invoice", "statement", "vendor", "particulars", "quantity", "gross wt", "net wt", "making charge", "purity", "rate"}
+                has_invoice_keyword = any(any(ik in w["text"].lower() for ik in invoice_keywords) for w in words)
+                if has_invoice_keyword:
+                    is_two_column = False
+                
+            if is_two_column:
                 # Group middle words into horizontal lines
                 mid_lines = []
                 sorted_mid = sorted(middle_words, key=lambda w: (w["bbox"][1], w["bbox"][0]))
@@ -142,7 +149,8 @@ class OCREngine:
             
         return {
             "raw_text": " \n".join(lines),
-            "words": sorted_words
+            "words": sorted_words,
+            "image_path": image_path
         }
 
     def _sort_words_reading_order(self, words_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

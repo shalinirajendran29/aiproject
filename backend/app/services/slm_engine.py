@@ -11,38 +11,93 @@ class SLMEngine:
 
     def extract_fields(self, ocr_res: Any) -> Dict[str, Any]:
         """
-        Uses Ollama SLM or heuristic tabular alignment to extract structured fields dynamically.
+        Uses Ollama SLM, Gemini, or heuristic tabular alignment to extract structured fields dynamically.
         Falls back to rule-based parser if Ollama is unavailable.
         """
+        import os
 
         if isinstance(ocr_res, dict):
             ocr_text = ocr_res.get("raw_text", "")
             words = ocr_res.get("words", [])
+            image_path = ocr_res.get("image_path", None)
         else:
             ocr_text = str(ocr_res)
             words = []
-            
-        # Try heuristic table extraction first if words are present
-        if words:
-            table_data = self._extract_table_records(words, ocr_text)
-            if table_data and "records" in table_data and len(table_data["records"]) > 0:
-                print(f"Table ingestion active: Extracted {len(table_data['records'])} rows.")
-                return table_data
-
+            image_path = None
 
         prompt = (
-            "You are an AI document parser. Analyze the OCR text below and dynamically identify all labeled fields/attributes and their corresponding values.\n"
+            "You are an AI document parser. Analyze the document and dynamically identify all labeled fields/attributes and their corresponding values.\n"
             "Identify and extract all keys such as customer/full name, mobile number, address, country, state, district, pin/zip code, PAN number, GSTIN number, company name, website, invoice number, invoice date, total amount, vendor name, item description, gross weight, net weight, purity, making charges, wastage, rate per gram, stone weight, quantity, unit price, discount, hsn/sac code, shipping charges, sku/item code, patient name, doctor name, admission date, discharge date, room number, medicine cost, insurance provider, pnr/booking id, journey date, source location, destination location, seat number, vehicle number, etc.\n"
             "If components of an address (like state, district, or pin_code) are mentioned or embedded, please extract them into separate fields ('state', 'district', 'pin_code') instead of merging them into other unrelated fields.\n"
-            "Return the extracted details strictly as a single flat JSON object where the keys are the field names in lowercase snake_case (e.g. 'full_name', 'mobile_number', 'address', 'country', 'state', 'district', 'pin_code', 'pan_no', 'gstin_no', 'invoice_number', 'invoice_date', 'total_amount', 'vendor_name', 'gross_weight', 'net_weight', 'purity', 'making_charges', 'wastage', 'rate_per_gram', 'stone_weight', 'item_description', 'quantity', 'unit_price', 'discount', 'hsn_code', 'shipping_charges', 'sku_code', 'patient_name', 'doctor_name', 'admission_date', 'discharge_date', 'room_number', 'medicine_cost', 'insurance_provider', 'pnr_no', 'journey_date', 'source_location', 'destination_location', 'seat_number', 'vehicle_no') and the values are their extracted strings. "
+            "CRITICAL: If the document contains a table or list of items/records, you MUST extract EVERY SINGLE ROW/ITEM in the table without combining, summarizing, or omitting any rows. Extract all columns for each row (such as material_type, purity, quantity, net_weight, gross_weight, making_charges, rate_per_gram, stone_weight, total_amount) into separate objects inside the 'records' array. Do not miss any line items from the table. If a row lacks some fields, include the other fields that are present.\n"
+            "Return the extracted details strictly as a single JSON object where the keys are the field names in lowercase snake_case and the values are their extracted strings. "
             "Do not include any explanation or conversational text. Output only the JSON.\n\n"
             f"OCR Text:\n{ocr_text}"
-
         )
         
         # Check if Google Gemini API key is configured
         if self.gemini_api_key:
-            print("Gemini API key detected. Initiating Gemini AI cloud extraction...")
+            # 1. Try Gemini Multimodal Visual Extraction first
+            if image_path and os.path.exists(image_path):
+                print("Gemini API key and image detected. Initiating Gemini AI multimodal visual extraction...")
+                try:
+                    import base64
+                    with open(image_path, "rb") as f:
+                        img_bytes = f.read()
+                    img_b64 = base64.b64encode(img_bytes).decode("utf-8")
+                    
+                    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={self.gemini_api_key}"
+                    payload = {
+                        "contents": [{
+                            "parts": [
+                                {"text": prompt},
+                                {
+                                    "inlineData": {
+                                        "mimeType": "image/png",
+                                        "data": img_b64
+                                    }
+                                }
+                            ]
+                        }],
+                        "generationConfig": {
+                            "responseMimeType": "application/json"
+                        }
+                    }
+                    headers = {"Content-Type": "application/json"}
+                    
+                    import time
+                    response = None
+                    max_retries = 3
+                    for attempt in range(max_retries):
+                        try:
+                            response = requests.post(url, json=payload, headers=headers, timeout=60)
+                            if response.status_code == 200:
+                                break
+                            elif response.status_code in (429, 503):
+                                print(f"Gemini API returned temporary error {response.status_code} (attempt {attempt+1}/{max_retries}). Retrying in 5 seconds...")
+                                time.sleep(5)
+                            else:
+                                break
+                        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as req_err:
+                            print(f"Gemini API request failed or timed out (attempt {attempt+1}/{max_retries}): {req_err}")
+                            if attempt < max_retries - 1:
+                                time.sleep(5)
+                            else:
+                                raise req_err
+                                
+                    if response and response.status_code == 200:
+                        res_json = response.json()
+                        result_text = res_json["candidates"][0]["content"]["parts"][0]["text"]
+                        data = json.loads(result_text)
+                        return self._post_process_data(data, ocr_text)
+                    else:
+                        status_code = response.status_code if response else "No Response"
+                        print(f"Gemini multimodal API returned status code {status_code}. Falling back to standard Gemini.")
+                except Exception as gemini_err:
+                    print(f"Gemini multimodal API call failed ({gemini_err}). Falling back to standard Gemini.")
+
+            # 2. Try Standard Text-only Gemini Extraction
+            print("Initiating Gemini AI standard text-only cloud extraction...")
             try:
                 url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={self.gemini_api_key}"
                 payload = {
@@ -54,16 +109,46 @@ class SLMEngine:
                     }
                 }
                 headers = {"Content-Type": "application/json"}
-                response = requests.post(url, json=payload, headers=headers, timeout=30)
-                if response.status_code == 200:
+                
+                import time
+                response = None
+                max_retries = 3
+                for attempt in range(max_retries):
+                    try:
+                        response = requests.post(url, json=payload, headers=headers, timeout=60)
+                        if response.status_code == 200:
+                            break
+                        elif response.status_code in (429, 503):
+                            print(f"Gemini API returned temporary error {response.status_code} (attempt {attempt+1}/{max_retries}). Retrying in 5 seconds...")
+                            time.sleep(5)
+                        else:
+                            break
+                    except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as req_err:
+                        print(f"Gemini API request failed or timed out (attempt {attempt+1}/{max_retries}): {req_err}")
+                        if attempt < max_retries - 1:
+                            time.sleep(5)
+                        else:
+                            raise req_err
+                            
+                if response and response.status_code == 200:
                     res_json = response.json()
                     result_text = res_json["candidates"][0]["content"]["parts"][0]["text"]
                     data = json.loads(result_text)
                     return self._post_process_data(data, ocr_text)
                 else:
-                    print(f"Gemini API returned status code {response.status_code}. Falling back to Ollama.")
+                    status_code = response.status_code if response else "No Response"
+                    print(f"Gemini standard API returned status code {status_code}. Falling back.")
             except Exception as gemini_err:
-                print(f"Gemini API call failed ({gemini_err}). Falling back to Ollama.")
+                print(f"Gemini standard API call failed ({gemini_err}). Falling back.")
+
+        # 3. Fallback: Try heuristic table extraction first if words are present
+        if words:
+            table_data = self._extract_table_records(words, ocr_text)
+            if table_data and "records" in table_data and len(table_data["records"]) > 0:
+                print(f"Table ingestion active (Fallback): Extracted {len(table_data['records'])} rows.")
+                flat_data = self._regex_fallback_extract(ocr_text)
+                flat_data["records"] = table_data["records"]
+                return self._post_process_data(flat_data, ocr_text)
 
         payload = {
             "model": self.model,
@@ -257,7 +342,10 @@ class SLMEngine:
         processed = {}
         for k, v in data.items():
             if v is not None:
-                processed[k.lower()] = v
+                if k.lower() == "records" and isinstance(v, list):
+                    processed["records"] = [self._post_process_data(item, ocr_text) for item in v if isinstance(item, dict)]
+                else:
+                    processed[k.lower()] = v
 
         # Clean mobile number if present
         if "mobile_number" in processed and processed["mobile_number"]:
@@ -543,7 +631,7 @@ class SLMEngine:
             })
             return blocks
 
-        # 3. Search for a header row in the top 4 lines
+        # 3. Search for a header row in the top 40 lines
         known_labels = [
             "name", "full name", "client", "patient", "employee", "customer",
             "email", "mail", "e-mail", "email address",
@@ -553,13 +641,18 @@ class SLMEngine:
             "address", "addr", "location", "residence", "street",
             "website", "web", "url", "zip", "zipcode", "pincode", "pin", "zip code",
             "pan", "pan no", "pan card", "gstin", "gstin no", "gst",
-            "country", "state", "province", "district", "city", "town"
+            "country", "state", "province", "district", "city", "town",
+            # GRN/Invoice specific table headers
+            "ref no", "ref. no.", "ref_no", "ref no.", "material type", "purity", 
+            "material price/g", "material price", "category", "sub category", 
+            "type", "quantity", "qty", "gross wt", "net wt", "others", "making charge", 
+            "rate per g", "total amount", "total", "making charges", "gross weight", "net weight"
         ]
 
         header_row_idx = -1
         col_headers = [] # list of {"key": normalized_key, "x_min": x0, "x_max": x1}
         
-        for idx, line_words in enumerate(lines_words[:4]):
+        for idx, line_words in enumerate(lines_words[:40]):
             blocks = get_text_blocks(line_words)
             matching_blocks_count = 0
             for b in blocks:
@@ -663,6 +756,45 @@ class SLMEngine:
     def _clean_key_helper(self, raw_key: str) -> str:
         # Helper to clean labels into standard snake_case keys (replicates inner clean_key of fallback parser)
         clean = re.sub(r'[^a-zA-Z0-9\s_]', '', raw_key).strip().lower()
+        if "ref no" in clean or "ref_no" in clean or clean == "ref":
+            return "ref_no"
+        if "material type" in clean or "material_type" in clean:
+            return "material_type"
+        if "purity" in clean:
+            return "purity"
+        if "material price" in clean or "price/g" in clean or "price per gram" in clean:
+            return "material_price_g"
+        if "category" in clean:
+            return "category"
+        if "sub category" in clean or "sub_category" in clean:
+            return "sub_category"
+        if "type" in clean:
+            return "type"
+        if "qty" in clean or "quantity" in clean:
+            return "quantity"
+        if "gross wt" in clean or "gross weight" in clean or "gr wt" in clean:
+            return "gross_weight"
+        if "net wt" in clean or "net weight" in clean or "nt wt" in clean:
+            return "net_weight"
+        if "stone wt" in clean or "stone weight" in clean or "st wt" in clean:
+            return "stone_weight"
+        if "others wt" in clean or "others weight" in clean:
+            return "others_wt"
+        if "others value" in clean or "others val" in clean:
+            return "others_value"
+        if "others" in clean:
+            return "others"
+        if "purchase rate" in clean or "pur rate" in clean:
+            return "purchase_rate"
+        if "stone rate" in clean:
+            return "stone_rate"
+        if "making charge" in clean or "making charges" in clean or clean == "mc":
+            return "making_charges"
+        if "rate per g" in clean or "rate per gram" in clean or "rate/g" in clean or "rate/gram" in clean:
+            return "rate_per_gram"
+        if "total amount" in clean or "total amt" in clean or clean == "total":
+            return "total_amount"
+
         if any(kw in clean for kw in ["code", "id", "identifier", "no", "num", "number"]):
             if "customer" in clean or "client" in clean or "patient" in clean:
                 return "customer_code"

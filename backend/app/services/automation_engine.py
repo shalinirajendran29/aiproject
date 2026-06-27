@@ -65,10 +65,283 @@ window.resolveInputLabel = (elem) => {
 };
 """
 
+JS_TABLE_GRID_HELPER = r"""
+window.getTableGrid = () => {
+    // 1. Check if there is a standard table on the page
+    let tbody = document.querySelector("table tbody");
+    if (tbody) {
+        let trs = Array.from(tbody.querySelectorAll("tr"));
+        // Sort rows by vertical position
+        trs.sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top);
+        
+        // Find header elements in the table
+        let headers = Array.from(document.querySelectorAll("table thead th, table thead td, table tr:first-child th"));
+        if (headers.length === 0) {
+            headers = Array.from(document.querySelectorAll("table th"));
+        }
+        let headersInfo = headers.map(h => {
+            let rect = h.getBoundingClientRect();
+            return { text: h.innerText.trim(), x: rect.left + rect.width / 2 };
+        }).filter(h => h.text);
+        
+        let rowsCount = trs.length;
+        let columnMapping = [];
+        
+        trs.forEach((tr, rIdx) => {
+            let rowInputs = Array.from(tr.querySelectorAll("input, select, textarea")).filter(el => {
+                let style = window.getComputedStyle(el);
+                if (style.display === 'none' || style.visibility === 'hidden' || el.offsetWidth === 0) return false;
+                if (el.type === 'hidden' || el.type === 'submit' || el.type === 'button') return false;
+                return true;
+            });
+            
+            // Sort inputs in row from left to right
+            rowInputs.sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left);
+            
+            rowInputs.forEach((inp, cIdx) => {
+                let inpX = inp.getBoundingClientRect().left + inp.getBoundingClientRect().width / 2;
+                // Find closest header
+                let closestHeader = null;
+                let minDist = Infinity;
+                headersInfo.forEach(h => {
+                    let dist = Math.abs(inpX - h.x);
+                    if (dist < minDist) {
+                        minDist = dist;
+                        closestHeader = h.text;
+                    }
+                });
+                
+                inp.setAttribute("data-autofill-row", rIdx);
+                inp.setAttribute("data-autofill-col", cIdx);
+                inp.setAttribute("data-autofill-header", closestHeader || "");
+                
+                if (rIdx === 0) {
+                    columnMapping.push(closestHeader || "");
+                }
+            });
+        });
+        
+        return {
+            rowsCount: rowsCount,
+            columns: columnMapping
+        };
+    }
+    
+    // 2. Fallback: Coordinate-based Y-clustering for custom div-based grids
+    let inputs = Array.from(document.querySelectorAll("input, textarea, select")).filter(el => {
+        let style = window.getComputedStyle(el);
+        if (style.display === 'none' || style.visibility === 'hidden' || el.offsetWidth === 0) return false;
+        if (el.type === 'hidden' || el.type === 'submit' || el.type === 'button') return false;
+        return true;
+    });
+
+    let groups = [];
+    inputs.forEach(inp => {
+        let rect = inp.getBoundingClientRect();
+        let y = rect.top + rect.height / 2;
+        let x = rect.left + rect.width / 2;
+        
+        let foundGroup = groups.find(g => Math.abs(g.y - y) < 15);
+        if (foundGroup) {
+            foundGroup.inputs.push({ element: inp, x, rect });
+        } else {
+            groups.push({ y, inputs: [{ element: inp, x, rect }] });
+        }
+    });
+
+    let headerTexts = ["Ref No.", "Material Type", "Purity", "Material Price/g", "Category", "Sub Category", "Type", "Quantity", "Total Wt in g", "Bag Wt in g", "Gross Wt in g", "Stone Wt in g", "Others", "Others Wt in g", "Others Value", "Net Wt in g", "Purchase Rate", "Stone Rate", "Making Charge", "Rate Per g", "Total Amount"];
+    let headersInfo = [];
+    let allEls = Array.from(document.querySelectorAll("div, span, th, p, label"));
+    headerTexts.forEach(txt => {
+        let match = allEls.find(el => el.innerText && el.innerText.trim() === txt);
+        if (match) {
+            let rect = match.getBoundingClientRect();
+            headersInfo.push({ text: txt, x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
+        }
+    });
+
+    let tableTopY = headersInfo.length > 0 ? Math.min(...headersInfo.map(h => h.y)) : 0;
+    headersInfo.sort((a, b) => a.x - b.x);
+
+    let rowGroups = groups.filter(g => g.y > tableTopY && g.inputs.length >= 3);
+    rowGroups.sort((a, b) => a.y - b.y);
+    rowGroups.forEach(g => {
+        g.inputs.sort((a, b) => a.x - b.x);
+    });
+
+    if (rowGroups.length === 0) return { rowsCount: 0, columns: [] };
+    
+    let firstRow = rowGroups[0];
+    let columnMapping = firstRow.inputs.map(inp => {
+        let closestHeader = null;
+        let minDist = Infinity;
+        headersInfo.forEach(h => {
+            let dist = Math.abs(inp.x - h.x);
+            if (dist < minDist) {
+                minDist = dist;
+                closestHeader = h.text;
+            }
+        });
+        return closestHeader || "";
+    });
+
+    rowGroups.forEach((g, rIdx) => {
+        g.inputs.forEach((inp, cIdx) => {
+            inp.element.setAttribute("data-autofill-row", rIdx);
+            inp.element.setAttribute("data-autofill-col", cIdx);
+            inp.element.setAttribute("data-autofill-header", columnMapping[cIdx] || "");
+        });
+    });
+
+    return {
+        rowsCount: rowGroups.length,
+        columns: columnMapping
+    };
+};
+"""
+
+
 
 class PlaywrightAutomationEngine:
     def __init__(self):
         self.headless = settings.PLAYWRIGHT_HEADLESS
+
+    def _fill_interactive_element(self, page, elem, value) -> bool:
+        try:
+            tag_name = elem.evaluate("e => e.tagName.toLowerCase()")
+            elem_type = elem.get_attribute("type") or ""
+            class_attr = elem.get_attribute("class") or ""
+            role_attr = elem.get_attribute("role") or ""
+            
+            if tag_name == "select":
+                elem.select_option(value=str(value))
+            elif elem_type == "checkbox":
+                if str(value).lower() in ("true", "yes", "checked", "1"):
+                    elem.check()
+            elif role_attr == "combobox" or "MuiAutocomplete-input" in class_attr:
+                print(f"Handling MUI Autocomplete with value '{value}'")
+                elem.click()
+                page.wait_for_timeout(300)
+                
+                # Case-insensitive, space-insensitive, and fuzzy option matching
+                try:
+                    page.wait_for_selector("li[role='option'], .MuiAutocomplete-option", timeout=2000)
+                    option_locator = page.locator("li[role='option'], .MuiAutocomplete-option")
+                    count = option_locator.count()
+                    matched = False
+                    
+                    val_norm = re.sub(r'[^a-z0-9]', '', str(value).lower())
+                    
+                    # 1. Try exact normalized match
+                    for idx in range(count):
+                        opt = option_locator.nth(idx)
+                        opt_text = opt.inner_text().strip()
+                        opt_norm = re.sub(r'[^a-z0-9]', '', opt_text.lower())
+                        if opt_norm == val_norm:
+                            opt.click()
+                            print(f"Found exact normalized match for '{value}': '{opt_text}'")
+                            matched = True
+                            break
+                            
+                    # 2. Try substring match
+                    if not matched:
+                        for idx in range(count):
+                            opt = option_locator.nth(idx)
+                            opt_text = opt.inner_text().strip()
+                            opt_norm = re.sub(r'[^a-z0-9]', '', opt_text.lower())
+                            if val_norm in opt_norm or opt_norm in val_norm:
+                                opt.click()
+                                print(f"Found substring match for '{value}': '{opt_text}'")
+                                matched = True
+                                break
+                                
+                    # 3. Try fuzzy Levenshtein match (threshold >= 65%)
+                    if not matched:
+                        best_opt = None
+                        best_sim = 0.0
+                        best_text = ""
+                        for idx in range(count):
+                            opt = option_locator.nth(idx)
+                            opt_text = opt.inner_text().strip()
+                            opt_norm = re.sub(r'[^a-z0-9]', '', opt_text.lower())
+                            
+                            dist = levenshtein_distance(val_norm, opt_norm)
+                            max_len = max(len(val_norm), len(opt_norm))
+                            sim = 1.0 - (dist / max_len) if max_len > 0 else 0.0
+                            
+                            if sim > best_sim:
+                                best_sim = sim
+                                best_opt = opt
+                                best_text = opt_text
+                                
+                        if best_sim >= 0.65:
+                            best_opt.click()
+                            print(f"Found fuzzy match for '{value}': '{best_text}' (similarity: {best_sim:.2f})")
+                            matched = True
+                            
+                    if not matched:
+                        # Fallback: type the value to filter
+                        print(f"No match in open list. Typing value '{value}' to filter...")
+                        elem.fill(str(value))
+                        page.wait_for_timeout(500)
+                        
+                        try:
+                            page.wait_for_selector("li[role='option'], .MuiAutocomplete-option", timeout=1500)
+                            option_locator = page.locator("li[role='option'], .MuiAutocomplete-option")
+                            count = option_locator.count()
+                            if count > 0:
+                                for idx in range(count):
+                                    opt = option_locator.nth(idx)
+                                    opt_text = opt.inner_text().strip()
+                                    opt_norm = re.sub(r'[^a-z0-9]', '', opt_text.lower())
+                                    
+                                    dist = levenshtein_distance(val_norm, opt_norm)
+                                    max_len = max(len(val_norm), len(opt_norm))
+                                    sim = 1.0 - (dist / max_len) if max_len > 0 else 0.0
+                                    
+                                    if opt_norm == val_norm or val_norm in opt_norm or opt_norm in val_norm or sim >= 0.65:
+                                        opt.click()
+                                        print(f"Clicked filtered option matching '{value}': '{opt_text}'")
+                                        matched = True
+                                        break
+                                if not matched:
+                                    option_locator.first.click()
+                                    print(f"Clicked first filtered option for '{value}'")
+                                    matched = True
+                            else:
+                                raise Exception("No options after filtering")
+                        except Exception:
+                            # Clear the input to reset filter list, and select the first available option
+                            print(f"No options match '{value}'. Resetting combobox and selecting first option...")
+                            elem.fill("")
+                            page.wait_for_timeout(300)
+                            # Wait for options to appear under empty filter
+                            page.wait_for_selector("li[role='option'], .MuiAutocomplete-option", timeout=1500)
+                            options = page.locator("li[role='option'], .MuiAutocomplete-option")
+                            if options.count() > 0:
+                                options.first.click()
+                                print(f"Selected first option: '{options.first.inner_text().strip()}'")
+                                matched = True
+                            else:
+                                page.keyboard.press("Enter")
+                except Exception as autocomplete_err:
+                    print(f"Autocomplete option selection failed: {autocomplete_err}. Trying simple fill fallback...")
+                    elem.fill(str(value))
+                    page.wait_for_timeout(300)
+                    page.keyboard.press("Enter")
+                    
+                # If we filled country or state, wait for cascading sub-options to load
+                if "country" in str(value).lower() or "state" in str(value).lower():
+                    print("Waiting for dynamic sub-options to load...")
+                    page.wait_for_timeout(1000)
+            else:
+                elem.click()
+                elem.fill("")
+                page.keyboard.type(str(value), delay=50)
+            return True
+        except Exception as e:
+            print(f"Error filling element: {e}")
+            return False
 
     def inspect_page_forms(self, url: str) -> List[Dict[str, Any]]:
         """
@@ -258,6 +531,36 @@ class PlaywrightAutomationEngine:
         except Exception as ex:
             return True, ""
 
+    def _perform_auto_login(self, page: Any) -> bool:
+        """
+        Attempts to perform programmatic auto-login if password field is visible.
+        Returns True if login was attempted.
+        """
+        has_password = page.query_selector("input[type='password']") is not None
+        if has_password:
+            print("Login page detected. Performing programmatic auto-login...")
+            try:
+                # Find email/username field
+                email_field = page.locator("input[type='email'], input[placeholder*='Email'], input[name*='email'], input").first
+                if email_field and email_field.is_visible():
+                    email_field.fill("kavya.psgtech@gmail.com")
+                    
+                # Find password field
+                pass_field = page.locator("input[type='password']").first
+                if pass_field and pass_field.is_visible():
+                    pass_field.fill("Kavya@2005")
+                    
+                # Find submit button
+                submit_btn = page.locator("button[type='submit'], button:has-text('Login'), button:has-text('Sign In')").first
+                if submit_btn and submit_btn.is_visible():
+                    submit_btn.click()
+                    print("Login button clicked. Waiting for form to load...")
+                    page.wait_for_timeout(5000)
+                    return True
+            except Exception as login_ex:
+                print(f"Auto-login exception: {login_ex}")
+        return False
+
     def fill_form(
         self, 
         url: str, 
@@ -293,7 +596,7 @@ class PlaywrightAutomationEngine:
             page = context.new_page()
             
             try:
-                page.goto(url, wait_until="load", timeout=30000)
+                page.goto(url, wait_until="domcontentloaded", timeout=60000)
             except Exception as e:
                 print(f"Initial page load warning: {e}")
                 
@@ -318,38 +621,50 @@ class PlaywrightAutomationEngine:
             
             # Relaunch headed if redirected to login page or no session exists
             if not is_logged_in:
-                if run_headless:
-                    print("Relaunching browser visibly to allow manual login...")
-                    page.close()
-                    context.close()
-                    browser.close()
+                # Try auto-login first
+                login_attempted = self._perform_auto_login(page)
+                
+                # Verify if we are logged in now
+                inputs_count = len(page.query_selector_all("input:not([type='hidden']), textarea, select"))
+                has_password = page.query_selector("input[type='password']") is not None
+                is_logged_in = not has_password or inputs_count > 3
+                
+                if not is_logged_in:
+                    if run_headless:
+                        print("Relaunching browser visibly to allow manual login...")
+                        page.close()
+                        context.close()
+                        browser.close()
+                        
+                        browser = p.chromium.launch(headless=False)
+                        context = browser.new_context()
+                        page = context.new_page()
+                        try:
+                            page.goto(url, wait_until="domcontentloaded", timeout=60000)
+                        except Exception as e:
+                            print(f"Page load warning on relaunch: {e}")
+                        
+                        # Try auto-login again on headed instance
+                        self._perform_auto_login(page)
                     
-                    browser = p.chromium.launch(headless=False)
-                    context = browser.new_context()
-                    page = context.new_page()
-                    try:
-                        page.goto(url, wait_until="load", timeout=30000)
-                    except Exception as e:
-                        print(f"Page load warning on relaunch: {e}")
-                
-                print("--------------------------------------------------------------------------------")
-                print("ACTION REQUIRED: If this site requires authentication, please log in now.")
-                print("The system is waiting for the target form fields to load...")
-                print("--------------------------------------------------------------------------------")
-                
-                # Wait up to 60 seconds for the user to login and the form to load
-                print("Waiting for login to complete and form to load...")
-                logged_in = False
-                for _ in range(60):
-                    has_password = page.query_selector("input[type='password']") is not None
-                    inputs = page.query_selector_all("input:not([type='hidden']), textarea, select")
-                    if not has_password and len(inputs) > 2:  # Stricter check (> 2) to ensure the form loaded
-                        logged_in = True
-                        break
-                    page.wait_for_timeout(1000)
-                
-                if not logged_in:
-                    print("Timeout waiting for form inputs. Saving current session cookies...")
+                    print("--------------------------------------------------------------------------------")
+                    print("ACTION REQUIRED: If this site requires authentication, please log in now.")
+                    print("The system is waiting for the target form fields to load...")
+                    print("--------------------------------------------------------------------------------")
+                    
+                    # Wait up to 60 seconds for the user to login and the form to load
+                    print("Waiting for login to complete and form to load...")
+                    logged_in = False
+                    for _ in range(60):
+                        has_password = page.query_selector("input[type='password']") is not None
+                        inputs = page.query_selector_all("input:not([type='hidden']), textarea, select")
+                        if not has_password and len(inputs) > 2:  # Stricter check (> 2) to ensure the form loaded
+                            logged_in = True
+                            break
+                        page.wait_for_timeout(1000)
+                    
+                    if not logged_in:
+                        print("Timeout waiting for form inputs. Saving current session cookies...")
                 
                 # Save session cookies
                 context.storage_state(path=auth_path)
@@ -439,29 +754,29 @@ class PlaywrightAutomationEngine:
                 browser.close()
                 return result
 
+            # --- Separate flat headers and records ---
+            flat_headers = {k: v for k, v in extracted_data.items() if k != "records"}
+            table_records = extracted_data.get("records", [])
+
             # --- Map the Fields ---
             print("Mapping document fields to web inputs...")
-            mapped_selectors = mapping_engine.map_fields(extracted_data, form_fields, db)
+            mapped_selectors = mapping_engine.map_fields(flat_headers, form_fields, db)
             result["mappings"] = mapped_selectors
 
-            if not mapped_selectors:
+            if not mapped_selectors and not table_records:
                 result["success"] = False
                 result["errors"].append("No matching fields could be semantically aligned.")
                 browser.close()
                 return result
 
-            # --- Fill the Fields ---
-            print("Filling form fields...")
-            
+            # --- Fill Flat Header Fields ---
+            print("Filling flat header fields...")
             # Sort selectors to handle cascading dropdowns (Country -> State -> District -> others)
             def get_fill_priority(sel):
                 sel_lower = sel.lower()
-                if "country" in sel_lower:
-                    return 1
-                if "state" in sel_lower:
-                    return 2
-                if "district" in sel_lower or "city" in sel_lower:
-                    return 3
+                if "country" in sel_lower: return 1
+                if "state" in sel_lower: return 2
+                if "district" in sel_lower or "city" in sel_lower: return 3
                 return 4
                 
             sorted_selectors = sorted(mapped_selectors.items(), key=lambda x: get_fill_priority(x[0]))
@@ -470,7 +785,7 @@ class PlaywrightAutomationEngine:
                 if not value:
                     continue
                 
-                # Clean mobile numbers: remove +91/91 country code and spaces
+                # Clean mobile numbers
                 selector_lower = selector.lower()
                 if any(kw in selector_lower for kw in ["mobile", "phone", "contact", "tel"]):
                     if isinstance(value, str):
@@ -504,128 +819,140 @@ class PlaywrightAutomationEngine:
                         elem = page.wait_for_selector(selector, timeout=5000)
                         
                     if elem:
-                        tag_name = elem.evaluate("e => e.tagName.toLowerCase()")
-                        elem_type = elem.get_attribute("type") or ""
-                        class_attr = elem.get_attribute("class") or ""
-                        role_attr = elem.get_attribute("role") or ""
-                        
-                        if tag_name == "select":
-                            elem.select_option(value=value)
-                        elif elem_type == "checkbox":
-                            if value.lower() in ("true", "yes", "checked", "1"):
-                                elem.check()
-                        elif role_attr == "combobox" or "MuiAutocomplete-input" in class_attr:
-                            # Material UI Autocomplete selection
-                            print(f"Handling MUI Autocomplete for selector '{selector}' with value '{value}'")
-                            elem.click()
-                            page.wait_for_timeout(300)
-                            
-                            # Case-insensitive, space-insensitive, and fuzzy option matching
-                            try:
-                                page.wait_for_selector("li[role='option'], .MuiAutocomplete-option", timeout=2000)
-                                option_locator = page.locator("li[role='option'], .MuiAutocomplete-option")
-                                count = option_locator.count()
-                                matched = False
-                                
-                                val_norm = re.sub(r'[^a-z0-9]', '', value.lower())
-                                
-                                # 1. Try exact normalized match
-                                for idx in range(count):
-                                    opt = option_locator.nth(idx)
-                                    opt_text = opt.inner_text().strip()
-                                    opt_norm = re.sub(r'[^a-z0-9]', '', opt_text.lower())
-                                    if opt_norm == val_norm:
-                                        opt.click()
-                                        print(f"Found exact normalized match for '{value}': '{opt_text}'")
-                                        matched = True
-                                        break
-                                        
-                                # 2. Try substring match
-                                if not matched:
-                                    for idx in range(count):
-                                        opt = option_locator.nth(idx)
-                                        opt_text = opt.inner_text().strip()
-                                        opt_norm = re.sub(r'[^a-z0-9]', '', opt_text.lower())
-                                        if val_norm in opt_norm or opt_norm in val_norm:
-                                            opt.click()
-                                            print(f"Found substring match for '{value}': '{opt_text}'")
-                                            matched = True
-                                            break
-                                            
-                                # 3. Try fuzzy Levenshtein match (threshold >= 65%)
-                                if not matched:
-                                    best_opt = None
-                                    best_sim = 0.0
-                                    best_text = ""
-                                    for idx in range(count):
-                                        opt = option_locator.nth(idx)
-                                        opt_text = opt.inner_text().strip()
-                                        opt_norm = re.sub(r'[^a-z0-9]', '', opt_text.lower())
-                                        
-                                        dist = levenshtein_distance(val_norm, opt_norm)
-                                        max_len = max(len(val_norm), len(opt_norm))
-                                        sim = 1.0 - (dist / max_len) if max_len > 0 else 0.0
-                                        
-                                        if sim > best_sim:
-                                            best_sim = sim
-                                            best_opt = opt
-                                            best_text = opt_text
-                                            
-                                    if best_sim >= 0.65:
-                                        best_opt.click()
-                                        print(f"Found fuzzy match for '{value}': '{best_text}' (similarity: {best_sim:.2f})")
-                                        matched = True
-                                        
-                                if not matched:
-                                    # Fallback: type the value to filter
-                                    print(f"No match in open list. Typing value '{value}' to filter...")
-                                    elem.fill(value)
-                                    page.wait_for_timeout(500)
-                                    
-                                    page.wait_for_selector("li[role='option'], .MuiAutocomplete-option", timeout=1500)
-                                    option_locator = page.locator("li[role='option'], .MuiAutocomplete-option")
-                                    count = option_locator.count()
-                                    if count > 0:
-                                        for idx in range(count):
-                                            opt = option_locator.nth(idx)
-                                            opt_text = opt.inner_text().strip()
-                                            opt_norm = re.sub(r'[^a-z0-9]', '', opt_text.lower())
-                                            
-                                            dist = levenshtein_distance(val_norm, opt_norm)
-                                            max_len = max(len(val_norm), len(opt_norm))
-                                            sim = 1.0 - (dist / max_len) if max_len > 0 else 0.0
-                                            
-                                            if opt_norm == val_norm or val_norm in opt_norm or opt_norm in val_norm or sim >= 0.65:
-                                                opt.click()
-                                                print(f"Clicked filtered option matching '{value}': '{opt_text}'")
-                                                matched = True
-                                                break
-                                        if not matched:
-                                            option_locator.first.click()
-                                            print(f"Clicked first filtered option for '{value}'")
-                                    else:
-                                        page.keyboard.press("Enter")
-                            except Exception as autocomplete_err:
-                                print(f"Autocomplete click option error: {autocomplete_err}. Fallback: typing value and enter.")
-                                elem.fill(value)
-                                page.wait_for_timeout(300)
-                                page.keyboard.press("Enter")
-                                
-                            # If we filled country or state, wait for cascading sub-options to load
-                            selector_lower = selector.lower()
-                            if "country" in selector_lower or "state" in selector_lower:
-                                print("Waiting for dynamic sub-options to load...")
-                                page.wait_for_timeout(1000)
-                        else:
-                            elem.click()
-                            elem.fill("")
-                            page.keyboard.type(value, delay=50)
-                            
-                        result["filled"].append(selector)
+                        success = self._fill_interactive_element(page, elem, value)
+                        if success:
+                            result["filled"].append(selector)
                 except Exception as ex:
                     err_msg = f"Failed to fill selector '{selector}': {str(ex)}"
                     print(err_msg)
                     result["errors"].append(err_msg)
+
+            # --- Fill Table Records (Tabular Row Items) ---
+            if table_records:
+                print(f"Detected {len(table_records)} table records. Starting multi-row filling...")
+                
+                # Inject JS Table Grid Helper
+                page.evaluate(JS_TABLE_GRID_HELPER)
+                
+                for r_idx, rec in enumerate(table_records):
+                    print(f"Filling table row {r_idx + 1}/{len(table_records)}")
+                    
+                    # 1. Check if row exists, if not click Add Row button
+                    grid_status = page.evaluate("window.getTableGrid()")
+                    current_rows = grid_status.get("rowsCount", 0)
+                    
+                    if r_idx >= current_rows:
+                        # Click Add Row button
+                        print(f"Row {r_idx} doesn't exist. Clicking Add Row button...")
+                        clicked = False
+                        
+                        # List of potential selectors for Add Row button
+                        # button.css-pvno25 is the verified star icon button that adds a row on this site!
+                        selectors = [
+                            "button.css-pvno25",
+                            "button:has(svg[data-testid='AddIcon'])",
+                            "svg[data-testid='AddIcon']",
+                            "button.css-xz9haa",
+                            "button:has(svg)"
+                        ]
+                        
+                        for sel in selectors:
+                            add_btn = page.locator(sel).first
+                            if add_btn and add_btn.is_visible():
+                                print(f"Trying to click Add Row button with selector: {sel}")
+                                try:
+                                    # Click programmatically using evaluate to bypass interception/overlays
+                                    add_btn.evaluate("el => el.click()")
+                                    page.wait_for_timeout(2000)
+                                    # Re-run grid helper to update DOM attributes
+                                    grid_status = page.evaluate("window.getTableGrid()")
+                                    current_rows = grid_status.get("rowsCount", 0)
+                                    print(f"Rows count after click: {current_rows}")
+                                    if current_rows > r_idx:
+                                        clicked = True
+                                        break
+                                except Exception as e:
+                                    print(f"Error clicking selector {sel}: {e}")
+                                    
+                        if not clicked:
+                            print("Add Row button (+) not found, not visible, or failed to increase row count!")
+                            result["errors"].append("Could not add new table row because Add Row button is missing or unresponsive.")
+                            break
+                            
+                    # 2. Fill each input in the row matching our record keys
+                    row_inputs = page.query_selector_all(f"input[data-autofill-row='{r_idx}'], select[data-autofill-row='{r_idx}'], textarea[data-autofill-row='{r_idx}']")
+                    print(f"Found {len(row_inputs)} inputs for row {r_idx}")
+                    
+                    for elem in row_inputs:
+                        # Check if element is disabled
+                        is_disabled = elem.is_disabled() or elem.evaluate("el => el.disabled") or elem.evaluate("el => el.classList.contains('Mui-disabled')")
+                        if is_disabled:
+                            continue
+                            
+                        # Retrieve column header
+                        header_label = elem.get_attribute("data-autofill-header") or ""
+                        if not header_label:
+                            continue
+                            
+                        # Clean column header to key
+                        clean_col = re.sub(r'[^a-zA-Z0-9\s_]', '', header_label).strip().lower()
+                        
+                        # Match to standard keys
+                        matched_key = None
+                        if "ref no" in clean_col or "ref_no" in clean_col or clean_col == "ref":
+                            matched_key = "ref_no"
+                        elif "material type" in clean_col:
+                            matched_key = "material_type"
+                        elif "purity" in clean_col:
+                            matched_key = "purity"
+                        elif "price" in clean_col:
+                            matched_key = "material_price_g"
+                        elif "category" in clean_col and "sub" not in clean_col:
+                            matched_key = "category"
+                        elif "sub category" in clean_col or "subcategory" in clean_col:
+                            matched_key = "sub_category"
+                        elif "type" in clean_col:
+                            matched_key = "type"
+                        elif "quantity" in clean_col or "qty" in clean_col:
+                            matched_key = "quantity"
+                        elif "gross" in clean_col:
+                            matched_key = "gross_weight"
+                        elif "net" in clean_col:
+                            matched_key = "net_weight"
+                        elif "stone wt" in clean_col:
+                            matched_key = "stone_weight"
+                        elif "others wt" in clean_col:
+                            matched_key = "others_wt"
+                        elif "others value" in clean_col:
+                            matched_key = "others_value"
+                        elif "others" in clean_col:
+                            matched_key = "others"
+                        elif "purchase rate" in clean_col:
+                            matched_key = "purchase_rate"
+                        elif "stone rate" in clean_col:
+                            matched_key = "stone_rate"
+                        elif "making charge" in clean_col:
+                            matched_key = "making_charges"
+                        elif "rate per g" in clean_col or "rate per gram" in clean_col:
+                            matched_key = "rate_per_gram"
+                        elif "total wt" in clean_col:
+                            # In target website, Col 9 is Total Wt in g, let's map it to gross_weight!
+                            matched_key = "gross_weight"
+                        elif "bag wt" in clean_col:
+                            # Default bag weight can be 0
+                            matched_key = "bag_weight"
+                            
+                        # If we have a matched key, check if it's in our record dictionary
+                        val_to_fill = None
+                        if matched_key and matched_key in rec:
+                            val_to_fill = rec[matched_key]
+                        elif matched_key == "bag_weight":
+                            val_to_fill = "0"
+                            
+                        if val_to_fill is not None and str(val_to_fill).strip() != "":
+                            print(f"  Filling column '{header_label}' (key: {matched_key}) with value: '{val_to_fill}'")
+                            self._fill_interactive_element(page, elem, val_to_fill)
+                            result["filled"].append(f"row_{r_idx}_col_{header_label}")
             
             # --- Auto-click Submit Button ---
             submit_selectors = [
@@ -725,27 +1052,39 @@ class PlaywrightAutomationEngine:
                     is_logged_in = False
             
             if not is_logged_in:
-                if run_headless:
-                    page.close()
-                    context.close()
-                    browser.close()
-                    browser = p.chromium.launch(headless=False)
-                    context = browser.new_context()
-                    page = context.new_page()
-                    try:
-                        page.goto(url, wait_until="load", timeout=30000)
-                    except Exception as e:
-                        print(f"Page load warning on relaunch: {e}")
+                # Try auto-login first
+                login_attempted = self._perform_auto_login(page)
                 
-                print("Waiting for login to complete and form to load...")
-                logged_in = False
-                for _ in range(60):
-                    has_password = page.query_selector("input[type='password']") is not None
-                    inputs = page.query_selector_all("input:not([type='hidden']), textarea, select")
-                    if not has_password and len(inputs) > 2:
-                        logged_in = True
-                        break
-                    page.wait_for_timeout(1000)
+                # Check if logged in now
+                inputs_count = len(page.query_selector_all("input:not([type='hidden']), textarea, select"))
+                has_password = page.query_selector("input[type='password']") is not None
+                is_logged_in = not has_password or inputs_count > 3
+                
+                if not is_logged_in:
+                    if run_headless:
+                        page.close()
+                        context.close()
+                        browser.close()
+                        browser = p.chromium.launch(headless=False)
+                        context = browser.new_context()
+                        page = context.new_page()
+                        try:
+                            page.goto(url, wait_until="load", timeout=30000)
+                        except Exception as e:
+                            print(f"Page load warning on relaunch: {e}")
+                            
+                        # Try auto-login on headed instance
+                        self._perform_auto_login(page)
+                    
+                    print("Waiting for login to complete and form to load...")
+                    logged_in = False
+                    for _ in range(60):
+                        has_password = page.query_selector("input[type='password']") is not None
+                        inputs = page.query_selector_all("input:not([type='hidden']), textarea, select")
+                        if not has_password and len(inputs) > 2:
+                            logged_in = True
+                            break
+                        page.wait_for_timeout(1000)
                 
                 context.storage_state(path=auth_path)
                 print(f"Saved authenticated session state.")
