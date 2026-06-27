@@ -3642,8 +3642,6 @@ export default function App() {
                     </p>
                   </div>
                 </div>
-                  </div>
-                </div>
               )}
               
               {/* Form Render Viewport */}
