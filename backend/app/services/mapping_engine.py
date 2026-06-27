@@ -78,6 +78,21 @@ class FieldMappingEngine:
             return 0.0
         return float(np.dot(a, b) / (norm_a * norm_b))
 
+    def _get_cached_embedding(self, text: str) -> np.ndarray:
+        import hashlib
+        from .cache_service import cache_service
+        text_hash = hashlib.sha256(text.encode()).hexdigest()
+        cache_key = f"embedding:hash:{text_hash}"
+        cached = cache_service.get(cache_key)
+        if cached is not None:
+            return np.array(cached, dtype=np.float32)
+        if self.model is None:
+            raise ValueError("Embedding model is offline")
+        emb = self.model.encode([text])[0]
+        # Cache list representation for 30 days TTL (Point 15)
+        cache_service.set(cache_key, emb.tolist(), expire_seconds=30 * 24 * 3600)
+        return emb
+
     def _get_string_match_score(self, source_key: str, target_field_info: str) -> float:
         """Fallback lexical overlap scorer if SentenceTransformers is offline."""
         source_clean = source_key.lower().replace('_', ' ')
@@ -184,13 +199,13 @@ class FieldMappingEngine:
             except Exception as e:
                 print(f"Error reading mapping memory from DB: {e}")
 
-        # Vectorize if Model is available
+        # Vectorize if Model is available (Point 15 - Embedding Cache)
         model_active = self.model is not None
         if model_active:
             try:
                 extracted_keys = list(valid_extracted.keys())
-                key_embeddings = self.model.encode(extracted_keys)
-                desc_embeddings = self.model.encode([desc for _, desc in field_descriptions])
+                key_embeddings = [self._get_cached_embedding(k) for k in extracted_keys]
+                desc_embeddings = [self._get_cached_embedding(desc) for _, desc in field_descriptions]
             except Exception as e:
                 print(f"Embedding encoding failed ({e}). Reverting to synonym rules.")
                 model_active = False

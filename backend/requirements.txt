@@ -12,3 +12,4 @@ python-multipart>=0.0.6
 psycopg2-binary>=2.9.6
 torch>=2.0.0
 pydantic-settings>=2.0.0
+google-cloud-documentai>=2.20.0

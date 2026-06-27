@@ -8,6 +8,7 @@ from ..models.document import DBModelDocument
 from ..services.automation_engine import PlaywrightAutomationEngine
 from ..services.mapping_engine import FieldMappingEngine
 from ..config import settings
+from .admin import load_admin_data
 
 router = APIRouter(prefix="/automation", tags=["automation"])
 
@@ -30,6 +31,11 @@ class BulkFillRequest(BaseModel):
 @router.post("/crawl", response_model=List[Dict[str, Any]])
 def crawl_web_fields(request: CrawlRequest):
     """Crawls a target website and lists all visible input fields."""
+    # Check autofill feature flag (Point 3)
+    admin_settings = load_admin_data()["settings"]
+    if not admin_settings.get("feature_flags_autofill", True):
+        raise HTTPException(status_code=400, detail="Autofill feature is currently disabled by administrator settings.")
+
     try:
         fields = automation_engine.inspect_page_forms(request.url)
         return fields
@@ -40,6 +46,11 @@ def crawl_web_fields(request: CrawlRequest):
 @router.post("/fill")
 def fill_web_form(request: FillRequest, db: Session = Depends(get_db)):
     """Maps extracted data from the document and fills the web form using Playwright."""
+    # Check autofill feature flag (Point 3)
+    admin_settings = load_admin_data()["settings"]
+    if not admin_settings.get("feature_flags_autofill", True):
+        raise HTTPException(status_code=400, detail="Autofill feature is currently disabled by administrator settings.")
+
     # 1. Fetch document
     doc = db.query(DBModelDocument).filter(DBModelDocument.id == request.document_id).first()
     if not doc:
@@ -99,9 +110,15 @@ def fill_web_form(request: FillRequest, db: Session = Depends(get_db)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Autofill simulation crashed: {str(e)}")
 
+
 @router.post("/fill-bulk")
 def fill_web_form_bulk(request: BulkFillRequest, db: Session = Depends(get_db)):
     """Maps extracted data from the document and loops to fill all records using Playwright."""
+    # Check autofill feature flag (Point 3)
+    admin_settings = load_admin_data()["settings"]
+    if not admin_settings.get("feature_flags_autofill", True):
+        raise HTTPException(status_code=400, detail="Autofill feature is currently disabled by administrator settings.")
+
     # 1. Fetch document
     doc = db.query(DBModelDocument).filter(DBModelDocument.id == request.document_id).first()
     if not doc:

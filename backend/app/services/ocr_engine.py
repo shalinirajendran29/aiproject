@@ -1,5 +1,6 @@
 import easyocr
 import numpy as np
+import os
 from typing import Dict, Any, List
 
 class OCREngine:
@@ -17,25 +18,123 @@ class OCREngine:
 
     def extract_text(self, image_path: str) -> Dict[str, Any]:
         """
-        Extracts text from the image, preserving position info.
+        Extracts text from the image using Document AI (primary) or EasyOCR (secondary/fallback).
         """
-        results = self.reader.readtext(image_path)
+        from ..config import settings
+        from ..routers.admin import append_admin_log, load_admin_data
         
         words = []
-        for bbox, text, confidence in results:
-            # bbox is list of 4 points: [[x0, y0], [x1, y1], [x2, y2], [x3, y3]]
-            pts = np.array(bbox, dtype=np.int32)
-            x_min = int(np.min(pts[:, 0]))
-            y_min = int(np.min(pts[:, 1]))
-            x_max = int(np.max(pts[:, 0]))
-            y_max = int(np.max(pts[:, 1]))
+        docai_success = False
+        
+        # Read from dynamic admin settings first, fallback to environment settings
+        try:
+            admin_data = load_admin_data()
+            admin_settings = admin_data.get("settings", {})
+        except Exception:
+            admin_settings = {}
             
-            words.append({
-                "text": text,
-                "confidence": float(confidence),
-                "bbox": [x_min, y_min, x_max, y_max]
-            })
-            
+        gcp_project_id = admin_settings.get("gcp_project_id") or settings.GCP_PROJECT_ID
+        gcp_location = admin_settings.get("gcp_location") or settings.GCP_LOCATION
+        docai_processor_id = admin_settings.get("docai_processor_id") or settings.DOCAI_PROCESSOR_ID
+        
+        # Try DocAI first if configured
+        if gcp_project_id and docai_processor_id:
+            try:
+                append_admin_log("ocr", "INFO", f"DocAI: Initializing primary Google Document AI extraction for: {os.path.basename(image_path)}")
+                
+                from google.cloud import documentai
+                import mimetypes
+                from PIL import Image
+                
+                # Determine mime type
+                mime_type, _ = mimetypes.guess_type(image_path)
+                if not mime_type:
+                    mime_type = "image/png"
+                    
+                # Determine width/height
+                width, height = 1000, 1000
+                try:
+                    with Image.open(image_path) as img:
+                        width, height = img.size
+                except Exception:
+                    pass
+                    
+                client = documentai.DocumentProcessorServiceClient()
+                name = client.processor_path(gcp_project_id, gcp_location, docai_processor_id)
+                
+                with open(image_path, "rb") as image_file:
+                    image_content = image_file.read()
+                    
+                raw_document = documentai.RawDocument(content=image_content, mime_type=mime_type)
+                request = documentai.ProcessRequest(name=name, raw_document=raw_document)
+                
+                result = client.process_document(request=request)
+                document = result.document
+                
+                words = []
+                raw_text = document.text
+                
+                for page in document.pages:
+                    w_scale = page.dimension.width or width or 1000
+                    h_scale = page.dimension.height or height or 1000
+                    
+                    for token in page.tokens:
+                        text_segments = token.layout.text_anchor.text_segments
+                        token_text = ""
+                        for segment in text_segments:
+                            start = int(segment.start_index)
+                            end = int(segment.end_index)
+                            token_text += raw_text[start:end]
+                        
+                        token_text = token_text.strip()
+                        if not token_text:
+                            continue
+                        
+                        vertices = token.layout.bounding_poly.normalized_vertices
+                        if not vertices:
+                            vertices = token.layout.bounding_poly.vertices
+                            x_coords = [int(v.x) for v in vertices if hasattr(v, 'x')]
+                            y_coords = [int(v.y) for v in vertices if hasattr(v, 'y')]
+                        else:
+                            x_coords = [int(v.x * w_scale) for v in vertices if hasattr(v, 'x')]
+                            y_coords = [int(v.y * h_scale) for v in vertices if hasattr(v, 'y')]
+                        
+                        if x_coords and y_coords:
+                            x_min, x_max = min(x_coords), max(x_coords)
+                            y_min, y_max = min(y_coords), max(y_coords)
+                            confidence = getattr(token.layout, "confidence", 1.0)
+                            words.append({
+                                "text": token_text,
+                                "confidence": float(confidence),
+                                "bbox": [x_min, y_min, x_max, y_max]
+                            })
+                
+                append_admin_log("ocr", "INFO", f"DocAI: Successfully parsed document via Google Cloud. Extracted {len(words)} tokens.")
+                docai_success = True
+                
+            except Exception as e:
+                append_admin_log("ocr", "WARNING", f"DocAI extraction failed ({str(e)}). Falling back to EasyOCR.")
+                print(f"DocAI Error: {e}")
+                docai_success = False
+                
+        if not docai_success:
+            # Fallback to EasyOCR
+            append_admin_log("ocr", "INFO", f"EasyOCR: Extracting text via local offline pipeline...")
+            results = self.reader.readtext(image_path)
+            words = []
+            for bbox, text, confidence in results:
+                pts = np.array(bbox, dtype=np.int32)
+                x_min = int(np.min(pts[:, 0]))
+                y_min = int(np.min(pts[:, 1]))
+                x_max = int(np.max(pts[:, 0]))
+                y_max = int(np.max(pts[:, 1]))
+                
+                words.append({
+                    "text": text,
+                    "confidence": float(confidence),
+                    "bbox": [x_min, y_min, x_max, y_max]
+                })
+
         if not words:
             return {"raw_text": "", "words": []}
             

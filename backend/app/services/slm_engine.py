@@ -1,18 +1,36 @@
 import requests
 import json
 import re
+import hashlib
 from typing import Dict, Any, List, Optional
 from ..config import settings
+from .cache_service import cache_service
+
 class SLMEngine:
     def __init__(self):
         self.base_url = settings.OLLAMA_BASE_URL
         self.model = settings.OLLAMA_MODEL
         self.gemini_api_key = settings.GEMINI_API_KEY
+        
+        # Compile prompt injection neutralization pattern at startup (Rule 11)
+        self.injection_keywords = [
+            "ignore previous instructions", 
+            "ignore instructions", 
+            "output the system prompt",
+            "system prompt", 
+            "override prompt",
+            "delete database", 
+            "drop table"
+        ]
+        self.injection_regex = re.compile(
+            "|".join(re.escape(k) for k in self.injection_keywords), 
+            re.IGNORECASE
+        )
 
-    def extract_fields(self, ocr_res: Any) -> Dict[str, Any]:
+    def extract_fields(self, ocr_res: Any, file_hash: Optional[str] = None) -> Dict[str, Any]:
         """
         Uses Ollama SLM, Gemini, or heuristic tabular alignment to extract structured fields dynamically.
-        Falls back to rule-based parser if Ollama is unavailable.
+        Falls back to rule-based parser if Ollama is unavailable. Uses AI result caching.
         """
         import os
 
@@ -25,18 +43,96 @@ class SLMEngine:
             words = []
             image_path = None
 
+        # 1. Load active settings and prompt version
+        from ..routers.admin import append_admin_log, load_admin_data
+        admin_settings = load_admin_data()["settings"]
+        prompt_version = admin_settings.get("prompt_version", "v1")
+
+        # Determine the file identification hash for caching
+        import hashlib
+        repr_hash = file_hash or hashlib.sha256(ocr_text.encode()).hexdigest()
+        
+        # Build prompt cache lookup key SHA256(file_hash + prompt_version + model_name)
+        import hashlib
+        ai_cache_key = f"ai:result:{hashlib.sha256((repr_hash + prompt_version + self.model).encode()).hexdigest()}"
+        cached_ai = cache_service.get(ai_cache_key)
+        if cached_ai:
+            append_admin_log("deduplication", "INFO", f"AI Cache Hit: Restored extraction values from cache key {ai_cache_key[:16]}...")
+            return cached_ai
+            
+        # Prompt Injection Protection using pre-compiled regex
+        if admin_settings.get("prompt_injection_protection", True):
+            found_matches = self.injection_regex.findall(ocr_text)
+            if found_matches:
+                append_admin_log("injection", "WARNING", f"Potential prompt injection pattern detected: {', '.join(set(found_matches))}. Neutralizing...")
+                # Neutralize by replacing the offending phrases with a warning block
+                ocr_text = self.injection_regex.sub("[RESTRICTED SECURE VALUE BLOCKED]", ocr_text)
+            
+        # Try heuristic table extraction first if words are present
+        if words:
+            table_data = self._extract_table_records(words, ocr_text)
+            if table_data and "records" in table_data and len(table_data["records"]) > 0:
+                print(f"Table ingestion active: Extracted {len(table_data['records'])} rows.")
+                # Attach pipeline version metadata
+                table_data["_pipeline_metadata"] = {
+                    "ocr_engine_version": "EasyOCR v3.1" if admin_settings.get("feature_flags_ocr", True) else "OCR Disabled",
+                    "prompt_version": f"Prompt {prompt_version}",
+                    "model_version": "Heuristic Table Parser",
+                    "pipeline_version": "Pipeline v2"
+                }
+                # Cache table heuristic result for 30 days
+                cache_service.set(ai_cache_key, table_data, expire_seconds=30 * 86400)
+                return table_data
+
+        # --- Prompt Cache ---
+        default_system = (
+            "You are an advanced AI document parser with high reasoning capability. "
+            "Your task is to analyze the provided OCR text and extract structured fields with extreme accuracy. "
+            "Handle complex layouts, nested tables, and multi-line values correctly. "
+            "Correct obvious OCR typos based on context (e.g. 'O' to '0' in dates or codes). "
+            "Do not hallucinate data; if a field is not present, omit it."
+        )
+        default_extraction = (
+            "Identify and extract key entities, including but not limited to:\n"
+            "- Entities: buyer/customer full name, vendor/company name, address, country, state, district, pin_code, mobile_number, email.\n"
+            "- Tax & IDs: PAN number, GSTIN number.\n"
+            "- Invoice/Bill Details: invoice_number, invoice_date, total_amount, shipping_charges, discount.\n"
+            "- Line Items (aggregate or dominant if flat): item_description, quantity, unit_price, hsn_code.\n"
+            "- Industry Specific (if applicable): gross_weight, net_weight, purity, making_charges, wastage, rate_per_gram, stone_weight, patient_name, doctor_name, admission_date, discharge_date, room_number, medicine_cost, insurance_provider, pnr_no, journey_date, source_location, destination_location, seat_number, vehicle_no.\n\n"
+            "CRITICAL INSTRUCTIONS:\n"
+            "1. Extract nested address components into separate fields ('state', 'district', 'pin_code') rather than combining them.\n"
+            "2. For mathematical values (total amount, quantity, unit price), ensure they match the invoice logic.\n"
+            "3. Format dates cleanly if possible.\n"
+            "4. Return a SINGLE FLAT JSON object. Use strict lowercase snake_case for keys.\n"
+            "5. OUTPUT ONLY VALID JSON. Do not include markdown code blocks, thoughts, or explanations."
+        )
+        
+        system_prompt = cache_service.get_prompt("system", default_system)
+        extraction_prompt = cache_service.get_prompt("extraction", default_extraction)
+        
+        # Append our critical table rows warning to the extraction prompt
+        table_warning = (
+            "\nCRITICAL: If the document contains a table or list of items/records, you MUST extract EVERY SINGLE ROW/ITEM in the table without combining, summarizing, or omitting any rows. "
+            "Extract all columns for each row (such as material_type, purity, quantity, net_weight, gross_weight, making_charges, rate_per_gram, stone_weight, total_amount) into separate objects inside the 'records' array. "
+            "Do not miss any line items from the table. If a row lacks some fields, include the other fields that are present."
+        )
+        extraction_prompt += table_warning
+        )
+        
+        system_prompt = cache_service.get_prompt("system", default_system)
+        extraction_prompt = cache_service.get_prompt("extraction", default_extraction)
+        
         prompt = (
-            "You are an AI document parser. Analyze the document and dynamically identify all labeled fields/attributes and their corresponding values.\n"
-            "Identify and extract all keys such as customer/full name, mobile number, address, country, state, district, pin/zip code, PAN number, GSTIN number, company name, website, invoice number, invoice date, total amount, vendor name, item description, gross weight, net weight, purity, making charges, wastage, rate per gram, stone weight, quantity, unit price, discount, hsn/sac code, shipping charges, sku/item code, patient name, doctor name, admission date, discharge date, room number, medicine cost, insurance provider, pnr/booking id, journey date, source location, destination location, seat number, vehicle number, etc.\n"
-            "If components of an address (like state, district, or pin_code) are mentioned or embedded, please extract them into separate fields ('state', 'district', 'pin_code') instead of merging them into other unrelated fields.\n"
-            "CRITICAL: If the document contains a table or list of items/records, you MUST extract EVERY SINGLE ROW/ITEM in the table without combining, summarizing, or omitting any rows. Extract all columns for each row (such as material_type, purity, quantity, net_weight, gross_weight, making_charges, rate_per_gram, stone_weight, total_amount) into separate objects inside the 'records' array. Do not miss any line items from the table. If a row lacks some fields, include the other fields that are present.\n"
-            "Return the extracted details strictly as a single JSON object where the keys are the field names in lowercase snake_case and the values are their extracted strings. "
-            "Do not include any explanation or conversational text. Output only the JSON.\n\n"
+            f"{system_prompt}\n"
+            f"{extraction_prompt}\n\n"
             f"OCR Text:\n{ocr_text}"
         )
         
+        result_data = None
+        
         # Check if Google Gemini API key is configured
-        if self.gemini_api_key:
+        gemini_key = admin_settings.get("gemini_api_key") or self.gemini_api_key
+        if gemini_key:
             # 1. Try Gemini Multimodal Visual Extraction first
             if image_path and os.path.exists(image_path):
                 print("Gemini API key and image detected. Initiating Gemini AI multimodal visual extraction...")
@@ -46,7 +142,7 @@ class SLMEngine:
                         img_bytes = f.read()
                     img_b64 = base64.b64encode(img_bytes).decode("utf-8")
                     
-                    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={self.gemini_api_key}"
+                    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={gemini_key}"
                     payload = {
                         "contents": [{
                             "parts": [
@@ -88,8 +184,8 @@ class SLMEngine:
                     if response and response.status_code == 200:
                         res_json = response.json()
                         result_text = res_json["candidates"][0]["content"]["parts"][0]["text"]
-                        data = json.loads(result_text)
-                        return self._post_process_data(data, ocr_text)
+                        data = self._clean_and_load_json(result_text)
+                        result_data = self._post_process_data(data, ocr_text)
                     else:
                         status_code = response.status_code if response else "No Response"
                         print(f"Gemini multimodal API returned status code {status_code}. Falling back to standard Gemini.")
@@ -97,9 +193,52 @@ class SLMEngine:
                     print(f"Gemini multimodal API call failed ({gemini_err}). Falling back to standard Gemini.")
 
             # 2. Try Standard Text-only Gemini Extraction
-            print("Initiating Gemini AI standard text-only cloud extraction...")
+            if not result_data:
+                print("Initiating Gemini AI standard text-only cloud extraction...")
+                try:
+                    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={gemini_key}"
+                    payload = {
+                        "contents": [{
+                            "parts": [{"text": prompt}]
+                        }],
+                        "generationConfig": {
+                            "responseMimeType": "application/json"
+                        }
+                    }
+                    headers = {"Content-Type": "application/json"}
+                    
+                    import time
+                    response = None
+                    max_retries = 3
+                    for attempt in range(max_retries):
+                        try:
+                            response = requests.post(url, json=payload, headers=headers, timeout=60)
+                            if response.status_code == 200:
+                                break
+                            elif response.status_code in (429, 503):
+                                print(f"Gemini API returned temporary error {response.status_code} (attempt {attempt+1}/{max_retries}). Retrying in 5 seconds...")
+                                time.sleep(5)
+                            else:
+                                break
+                        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as req_err:
+                            print(f"Gemini API request failed or timed out (attempt {attempt+1}/{max_retries}): {req_err}")
+                            if attempt < max_retries - 1:
+                                time.sleep(5)
+                            else:
+                                raise req_err
+                                
+                    if response and response.status_code == 200:
+                        res_json = response.json()
+                        result_text = res_json["candidates"][0]["content"]["parts"][0]["text"]
+                        data = self._clean_and_load_json(result_text)
+                        result_data = self._post_process_data(data, ocr_text)
+                    else:
+                        status_code = response.status_code if response else "No Response"
+                        print(f"Gemini standard API returned status code {status_code}. Falling back.")
+                except Exception as gemini_err:
+                    print(f"Gemini standard API call failed ({gemini_err}). Falling back.")
             try:
-                url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={self.gemini_api_key}"
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key={gemini_key}"
                 payload = {
                     "contents": [{
                         "parts": [{"text": prompt}]
@@ -134,7 +273,7 @@ class SLMEngine:
                     res_json = response.json()
                     result_text = res_json["candidates"][0]["content"]["parts"][0]["text"]
                     data = json.loads(result_text)
-                    return self._post_process_data(data, ocr_text)
+                    result_data = self._post_process_data(data, ocr_text)
                 else:
                     status_code = response.status_code if response else "No Response"
                     print(f"Gemini standard API returned status code {status_code}. Falling back.")
@@ -150,27 +289,44 @@ class SLMEngine:
                 flat_data["records"] = table_data["records"]
                 return self._post_process_data(flat_data, ocr_text)
 
-        payload = {
-            "model": self.model,
-            "prompt": prompt,
-            "format": "json",  # Forces Ollama to output valid JSON
-            "stream": False
-        }
-        
-        try:
-            response = requests.post(
-                f"{self.base_url}/api/generate",
-                json=payload,
-                timeout=30
-            )
-            if response.status_code == 200:
-                result_json = response.json().get("response", "{}")
-                data = json.loads(result_json)
-                return self._post_process_data(data, ocr_text)
-        except Exception as e:
-            print(f"Ollama SLM inference failed ({e}). Falling back to rule-based heuristics.")
+        if not result_data:
+            payload = {
+                "model": self.model,
+                "prompt": prompt,
+                "format": "json",  # Forces Ollama to output valid JSON
+                "stream": False
+            }
             
-        return self._post_process_data(self._regex_fallback_extract(ocr_text), ocr_text)
+            try:
+                response = requests.post(
+                    f"{self.base_url}/api/generate",
+                    json=payload,
+                    timeout=30
+                )
+                if response.status_code == 200:
+                    result_json = response.json().get("response", "{}")
+                    data = json.loads(result_json)
+                    result_data = self._post_process_data(data, ocr_text)
+            except Exception as e:
+                print(f"Ollama SLM inference failed ({e}). Falling back to rule-based heuristics.")
+                
+        if not result_data:
+            result_data = self._post_process_data(self._regex_fallback_extract(ocr_text), ocr_text)
+
+        # Attach pipeline version metadata (Requirement 11)
+        if isinstance(result_data, dict) and len(result_data) > 0:
+            model_name_used = "gemini-1.5-pro" if gemini_key else self.model
+            if "_pipeline_metadata" not in result_data:
+                result_data["_pipeline_metadata"] = {
+                    "ocr_engine_version": "EasyOCR v3.1" if admin_settings.get("feature_flags_ocr", True) else "OCR Disabled",
+                    "prompt_version": f"Prompt {prompt_version}",
+                    "model_version": model_name_used,
+                    "pipeline_version": "Pipeline v2"
+                }
+
+        # Cache the successfully post-processed data (30 days TTL) (Point 5)
+        cache_service.set(ai_cache_key, result_data, expire_seconds=30 * 86400)
+        return result_data
 
     def _regex_fallback_extract(self, text: str) -> Dict[str, Any]:
         """
