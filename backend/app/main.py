@@ -178,7 +178,8 @@ async def rate_limiting_middleware(request: Request, call_next):
             else:
                 ip_cache_limit_key = f"ip:requests:minute:{client_ip}"
                 current_requests = cache_service.incr_rate_limit(ip_cache_limit_key, window_seconds=60)
-                if current_requests > ip_limit:
+                is_loopback = client_ip in ["127.0.0.1", "::1", "localhost"]
+                if current_requests > ip_limit and not is_loopback:
                     append_admin_log("ratelimit", "WARNING", f"[{correlation_id}] Rate limit 429 triggered for IP '{client_ip}' (Limit: {ip_limit} req/min).")
                     return JSONResponse(
                         status_code=429,
