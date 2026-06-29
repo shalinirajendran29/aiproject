@@ -117,10 +117,6 @@ class SLMEngine:
             "Do not miss any line items from the table. If a row lacks some fields, include the other fields that are present."
         )
         extraction_prompt += table_warning
-        )
-        
-        system_prompt = cache_service.get_prompt("system", default_system)
-        extraction_prompt = cache_service.get_prompt("extraction", default_extraction)
         
         prompt = (
             f"{system_prompt}\n"
@@ -1152,3 +1148,34 @@ class SLMEngine:
                     return qty, price, amt
                     
         return None, None, None
+
+    def _clean_and_load_json(self, text: str) -> Dict[str, Any]:
+        text = text.strip()
+        # Remove markdown code block wrappers if present
+        if text.startswith("```"):
+            text = re.sub(r"^```(?:json)?\n", "", text, flags=re.IGNORECASE)
+            text = re.sub(r"\n```$", "", text)
+        text = text.strip()
+        
+        try:
+            return json.loads(text)
+        except Exception as e:
+            # Fix trailing commas inside arrays/objects
+            fixed = re.sub(r',\s*([\]}])', r'\1', text)
+            try:
+                return json.loads(fixed)
+            except Exception:
+                pass
+                
+            # Replace single quotes with double quotes around key-value pairs
+            fixed_quotes = fixed
+            fixed_quotes = re.sub(r"'([a-zA-Z0-9_]+)'\s*:", r'"\1":', fixed_quotes)
+            fixed_quotes = re.sub(r":\s*'([^']*)'", r': "\1"', fixed_quotes)
+            fixed_quotes = re.sub(r"'\s*,", r'",', fixed_quotes)
+            fixed_quotes = re.sub(r"\[\s*'([^']*)'", r'["\1"', fixed_quotes)
+            fixed_quotes = re.sub(r"'([^']*)'\s*\]", r'"\1"]', fixed_quotes)
+            
+            try:
+                return json.loads(fixed_quotes)
+            except Exception:
+                raise e
