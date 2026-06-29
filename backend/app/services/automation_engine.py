@@ -942,12 +942,32 @@ class PlaywrightAutomationEngine:
                             # Default bag weight can be 0
                             matched_key = "bag_weight"
                             
-                        # If we have a matched key, check if it's in our record dictionary
+                        # If we have a matched key, check if it's in our record dictionary with aliases
                         val_to_fill = None
-                        if matched_key and matched_key in rec:
-                            val_to_fill = rec[matched_key]
-                        elif matched_key == "bag_weight":
-                            val_to_fill = "0"
+                        if matched_key:
+                            aliases = [matched_key]
+                            if matched_key == "material_price_g":
+                                aliases.extend(["material_price_per_gram", "material_price_per_g", "material_price/g", "rate_per_gram"])
+                            elif matched_key == "making_charges":
+                                aliases.extend(["making_charge", "making charge", "making charges"])
+                            elif matched_key == "others_wt":
+                                aliases.extend(["others_wt_in_g", "other_wt_in_g", "other_weight", "others_weight"])
+                            elif matched_key == "ref_no":
+                                aliases.extend(["ref_no", "ref_no.", "ref no", "ref no.", "reference_id"])
+                            elif matched_key == "gross_weight":
+                                aliases.extend(["gross_weight", "gross_wt", "gross wt", "gross wt in g", "gross weight in g", "gross wt (g)", "total_wt_in_g", "total_weight"])
+                            elif matched_key == "net_weight":
+                                aliases.extend(["net_weight", "net_wt", "net wt", "net in g", "net_in_g", "net wt in g", "net weight in g", "net wt (g)"])
+                            elif matched_key == "stone_weight":
+                                aliases.extend(["stone_weight", "stone_wt", "stone wt", "stone wt in g", "stone_wt_in_g", "stone weight in g"])
+                            
+                            for alias in aliases:
+                                if alias in rec:
+                                    val_to_fill = rec[alias]
+                                    break
+                            
+                            if val_to_fill is None and matched_key == "bag_weight":
+                                val_to_fill = "0"
                             
                         if val_to_fill is not None and str(val_to_fill).strip() != "":
                             print(f"  Filling column '{header_label}' (key: {matched_key}) with value: '{val_to_fill}'")
