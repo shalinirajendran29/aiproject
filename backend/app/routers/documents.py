@@ -284,6 +284,7 @@ def process_document_task(doc_id: str, db_session_maker):
                     # Multi-page PDF: process each page as a separate record
                     records = []
                     all_raw_text = []
+                    global_headers = {}
                     for idx in range(len(pdf)):
                         cache_service.set(f"job:{doc_id}:stage", "ocr", expire_seconds=3600)
                         # Look up page-level OCR cache
@@ -315,15 +316,34 @@ def process_document_task(doc_id: str, db_session_maker):
                             ocr_res, 
                             file_hash=f"{file_hash}_page_{idx+1}" if file_hash else None
                         )
+                        
+                        # Merge records array
                         if "records" in extracted_page_data and isinstance(extracted_page_data["records"], list):
                             records.extend(extracted_page_data["records"])
                         else:
-                            records.append(extracted_page_data)
+                            # If it didn't extract as an array, treat the whole dictionary as a record row
+                            # but only if it contains some data
+                            if any(k not in ["_pipeline_metadata"] for k in extracted_page_data):
+                                records.append(extracted_page_data)
+                                
+                        # Merge top-level header/footer keys
+                        for k, v in extracted_page_data.items():
+                            if k == "records" or k == "_pipeline_metadata":
+                                continue
+                            if v is not None and str(v).strip() != "" and str(v).strip() != "-":
+                                # For fields like total_amount, sub_total, cgst, sgst, round_off, prefer values from later pages (footer)
+                                if k in ["total_amount", "sub_total", "round_off", "sgst", "cgst", "igst", "total_amount_in_words", "remarks"]:
+                                    global_headers[k] = v
+                                else:
+                                    # For other fields (headers like vendor_name, grn_date), prefer the first page's non-empty value
+                                    if k not in global_headers:
+                                        global_headers[k] = v
                             
                     doc.ocr_raw_text = "\n\n".join(all_raw_text)
                     db.commit()
                     
-                    extracted_data = {"records": records}
+                    # Combine headers, footers, and stitched records
+                    extracted_data = {**global_headers, "records": records}
                     
                     conf = 0.0
                     if records:
